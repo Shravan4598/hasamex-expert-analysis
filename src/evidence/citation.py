@@ -379,11 +379,13 @@ class CitationBuilder:
                 "Evidence quote cannot be empty."
             )
 
-        if evidence.status == EvidenceStatus.VERIFIED:
-            if not evidence.start_timestamp:
-                raise ValueError(
-                    "Verified evidence must contain a start timestamp."
-                )
+        if (
+            evidence.status == EvidenceStatus.VERIFIED
+            and not evidence.start_timestamp
+        ):
+            raise ValueError(
+                "Verified evidence must contain a start timestamp."
+            )
 
 
 def build_citation(
