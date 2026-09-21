@@ -12,12 +12,12 @@ documents exist. Source selection is controlled by the application.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from exception import SensorException
 from logger import logging
-
+from src.analysis.llm import GeminiLLMService, get_llm_service
 from src.config import Settings, get_settings
 from src.evidence.citation import CitationBuilder
 from src.evidence.quote_verifier import QuoteVerifier
@@ -31,7 +31,6 @@ from src.models import (
 )
 from src.retrieval.reranker import RetrievalReranker
 from src.retrieval.retriever import RetrievalFilters, Retriever
-from src.analysis.llm import GeminiLLMService, get_llm_service
 
 logger = logging.getLogger(__name__)
 

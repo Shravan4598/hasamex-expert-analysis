@@ -14,7 +14,6 @@ from typing import Final
 from exception import SensorException
 from logger import logging
 
-
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS: Final[frozenset[str]] = frozenset({".txt", ".md"})

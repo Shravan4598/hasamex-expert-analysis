@@ -24,7 +24,6 @@ from typing import Any
 import streamlit as st
 
 from logger import logging
-
 from src.analysis.interview_guide import (
     INTERVIEW_QUESTIONS,
     InterviewGuideAnalyzer,

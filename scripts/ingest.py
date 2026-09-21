@@ -14,11 +14,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from logger import logging
-
 from src.config import Settings, get_settings
 from src.ingestion.chunker import TranscriptChunker
 from src.ingestion.loader import TranscriptLoader

@@ -42,9 +42,7 @@ from src.retrieval.reranker import Reranker
 from src.retrieval.retriever import Retriever
 from src.retrieval.vector_store import FAISSVectorStore
 
-
 LOGGER = logging.getLogger(__name__)
-
 
 DEFAULT_CASES_PATH = Path(__file__).resolve().parent / "questions.json"
 
@@ -208,13 +206,8 @@ class EvaluationRunner:
     ) -> EvaluationResult:
         """Evaluate the returned grounded answer against case expectations."""
         evidence_present = bool(answer.evidence)
-
         citations_present = bool(answer.citations)
-
-        evidence_sufficient = bool(
-            answer.evidence_sufficient
-        )
-
+        evidence_sufficient = bool(answer.evidence_sufficient)
         evidence_coverage = float(
             answer.evidence_coverage or 0.0
         )
@@ -395,10 +388,9 @@ class EvaluationRunner:
         if case.expected_keywords and not keyword_match:
             return False
 
-        if case.expected_quote_fragments and not quote_match:
-            return False
-
-        return True
+        return not (
+         case.expected_quote_fragments and not quote_match
+       )
 
     @staticmethod
     def _check_expert(
@@ -411,9 +403,10 @@ class EvaluationRunner:
 
         expected = _normalize(case.expected_expert)
 
-        if answer.expert_name:
-            if _normalize(answer.expert_name) == expected:
-                return True
+        if answer.expert_name and (
+            _normalize(answer.expert_name) == expected
+        ):
+            return True
 
         for evidence in answer.evidence:
             if _normalize(evidence.expert_name) == expected:
@@ -436,9 +429,8 @@ class EvaluationRunner:
 
         expected = _normalize(case.expected_market)
 
-        if answer.market:
-            if _normalize(answer.market) == expected:
-                return True
+        if answer.market and _normalize(answer.market) == expected:
+            return True
 
         for evidence in answer.evidence:
             if _normalize(evidence.market) == expected:
@@ -705,13 +697,13 @@ def load_cases(
     elif isinstance(payload, list):
         raw_cases = payload
     else:
-        raise ValueError(
+        raise TypeError(
             "Evaluation JSON must contain either a list of cases "
             "or an object with a 'cases' list."
         )
 
     if not isinstance(raw_cases, list):
-        raise ValueError(
+        raise TypeError(
             "The 'cases' field must be a list."
         )
 
@@ -719,7 +711,7 @@ def load_cases(
 
     for index, raw_case in enumerate(raw_cases):
         if not isinstance(raw_case, dict):
-            raise ValueError(
+            raise TypeError(
                 f"Evaluation case at index {index} is not an object."
             )
 
@@ -1059,21 +1051,10 @@ def _timestamp_matches(
     if not expected:
         return True
 
-    start = _normalize_timestamp(
-        start_timestamp,
-    )
+    start = _normalize_timestamp(start_timestamp)
+    end = _normalize_timestamp(end_timestamp)
 
-    end = _normalize_timestamp(
-        end_timestamp,
-    )
-
-    if expected == start or expected == end:
-        return True
-
-    # For point-in-time evidence, the start timestamp is normally the
-    # authoritative citation timestamp. We intentionally do not infer
-    # arbitrary timestamps inside a segment.
-    return False
+    return expected == start or expected == end
 
 
 def main() -> int:
@@ -1124,10 +1105,7 @@ def main() -> int:
 
         # Return a non-zero exit code when a configured evaluation
         # case fails. This makes the evaluator suitable for CI/CD.
-        if summary.failed_cases > 0:
-            return 1
-
-        return 0
+        return int(summary.failed_cases > 0)
 
     except KeyboardInterrupt:
         print("\nEvaluation interrupted.")

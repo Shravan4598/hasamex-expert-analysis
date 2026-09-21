@@ -19,12 +19,11 @@ evidence. Answer generation belongs to the analysis layer.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from exception import SensorException
 from logger import logging
-
 from src.config import Settings, get_settings
 from src.models import RetrievalResult, TranscriptChunk
 

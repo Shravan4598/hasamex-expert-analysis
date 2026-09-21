@@ -18,13 +18,12 @@ analysis layers.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 import streamlit as st
 
 from logger import logging
-
 from src.analysis.disagreements import DisagreementAnalyzer
 from src.analysis.interview_guide import InterviewGuideAnalyzer
 from src.analysis.llm import GeminiLLM
@@ -35,25 +34,12 @@ from src.retrieval.embeddings import EmbeddingService
 from src.retrieval.reranker import Reranker
 from src.retrieval.retriever import Retriever
 from src.retrieval.vector_store import FAISSVectorStore
-from src.ui.dashboard import (
-    render_dashboard,
-    render_sidebar,
-)
-from src.ui.disagreements import (
-    render_disagreements,
-)
-from src.ui.interview_guide import (
-    render_interview_guide,
-)
-from src.ui.qa import (
-    render_qa,
-)
-from src.ui.sources import (
-    render_sources,
-)
-from src.ui.themes import (
-    render_themes,
-)
+from src.ui.dashboard import render_dashboard, render_sidebar
+from src.ui.disagreements import render_disagreements
+from src.ui.interview_guide import render_interview_guide
+from src.ui.qa import render_qa
+from src.ui.sources import render_sources
+from src.ui.themes import render_themes
 
 logger = logging.getLogger(__name__)
 
@@ -92,22 +78,14 @@ def main() -> None:
     """
     settings = _load_settings()
 
-    _configure_page(
-        settings
-    )
+    _configure_page(settings)
 
-    _render_application_header(
-        settings
-    )
+    _render_application_header(settings)
 
     try:
-        services = _get_application_services(
-            settings
-        )
-    except Exception as error:
-        _handle_initialization_error(
-            error
-        )
+        services = _get_application_services(settings)
+    except Exception as error:  # noqa: BLE001
+        _handle_initialization_error(error)
         return
 
     navigation = render_sidebar()
@@ -118,9 +96,7 @@ def main() -> None:
     )
 
 
-@st.cache_resource(
-    show_spinner=False,
-)
+@st.cache_resource(show_spinner=False)
 def _get_application_services(
     settings: Settings,
 ) -> ApplicationServices:
@@ -178,36 +154,28 @@ def _get_application_services(
             retriever=retriever,
             reranker=reranker,
             llm=llm,
-            min_evidence_coverage=(
-                settings.min_evidence_coverage
-            ),
+            min_evidence_coverage=settings.min_evidence_coverage,
         )
 
         themes = ThemeAnalyzer(
             retriever=retriever,
             reranker=reranker,
             llm=llm,
-            min_evidence_coverage=(
-                settings.min_evidence_coverage
-            ),
+            min_evidence_coverage=settings.min_evidence_coverage,
         )
 
         disagreements = DisagreementAnalyzer(
             retriever=retriever,
             reranker=reranker,
             llm=llm,
-            min_evidence_coverage=(
-                settings.min_evidence_coverage
-            ),
+            min_evidence_coverage=settings.min_evidence_coverage,
         )
 
         qa = TranscriptQA(
             retriever=retriever,
             reranker=reranker,
             llm=llm,
-            min_evidence_coverage=(
-                settings.min_evidence_coverage
-            ),
+            min_evidence_coverage=settings.min_evidence_coverage,
         )
 
         logger.info(
@@ -247,7 +215,7 @@ def _load_settings() -> Settings:
     try:
         return get_settings()
 
-    except Exception as error:
+    except Exception as error: 
         logger.exception(
             "Failed to load application settings."
         )
@@ -263,12 +231,8 @@ def _load_settings() -> Settings:
             "Application configuration could not be loaded."
         )
 
-        with st.expander(
-            "Configuration details"
-        ):
-            st.code(
-                str(error)
-            )
+        with st.expander("Configuration details"):
+            st.code(str(error))
 
         st.stop()
 
@@ -342,10 +306,7 @@ def _render_page(
     """
     Route the selected navigation item to its UI renderer.
     """
-    renderers: dict[
-        str,
-        Callable[[], None],
-    ] = {
+    renderers: dict[str, Callable[[], None]] = {
         "Dashboard": lambda: render_dashboard(
             services.retriever,
             services.vector_store,
@@ -368,9 +329,7 @@ def _render_page(
         ),
     }
 
-    renderer = renderers.get(
-        navigation
-    )
+    renderer = renderers.get(navigation)
 
     if renderer is None:
         st.error(
@@ -385,7 +344,7 @@ def _render_page(
     try:
         renderer()
 
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001
         _handle_page_error(
             navigation,
             error,
@@ -420,12 +379,8 @@ def _handle_initialization_error(
         """
     )
 
-    with st.expander(
-        "Technical details"
-    ):
-        st.code(
-            str(error)
-        )
+    with st.expander("Technical details"):
+        st.code(str(error))
 
 
 def _handle_page_error(
@@ -449,12 +404,8 @@ def _handle_page_error(
         "Review the application log for debugging information."
     )
 
-    with st.expander(
-        "Technical details"
-    ):
-        st.code(
-            str(error)
-        )
+    with st.expander("Technical details"):
+        st.code(str(error))
 
 
 if __name__ == "__main__":

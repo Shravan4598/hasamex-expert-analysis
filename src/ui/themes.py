@@ -22,7 +22,6 @@ from typing import Any
 import streamlit as st
 
 from logger import logging
-
 from src.analysis.themes import ThemeAnalyzer
 from src.models import Theme, ThemeEvidence
 

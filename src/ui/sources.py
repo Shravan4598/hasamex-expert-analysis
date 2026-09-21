@@ -23,12 +23,12 @@ objects. No transcript content is hard-coded.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 import streamlit as st
 
 from logger import logging
-
 from src.models import (
     TranscriptChunk,
     TranscriptMetadata,
@@ -723,7 +723,7 @@ def _format_timestamp_range(
 
 
 def _format_duration(
-    seconds: int | float | None,
+    seconds: float | None,
 ) -> str:
     """
     Convert seconds into a human-readable duration.

@@ -20,21 +20,20 @@ equivalent to cosine similarity.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 import faiss
 import numpy as np
 
 from exception import SensorException
 from logger import logging
-
 from src.config import Settings, get_settings
 from src.models import RetrievalResult, TranscriptChunk
 
 from .embeddings import EmbeddingService, get_embedding_service
-
 
 logger = logging.getLogger(__name__)
 

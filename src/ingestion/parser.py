@@ -90,7 +90,7 @@ class TranscriptParser:
         self,
         text: str,
         source_file: str,
-    ) -> Tuple[TranscriptMetadata, List[TranscriptSegment]]:
+    ) -> tuple[TranscriptMetadata, list[TranscriptSegment]]:
         """
         Parse a complete transcript.
 
@@ -266,8 +266,8 @@ class TranscriptParser:
 
     def _find_expert_header(
         self,
-        lines: List[str],
-    ) -> Tuple[int, Optional[re.Match[str]]]:
+        lines: list[str],
+    ) -> tuple[int, re.Match[str] | None]:
         """Find the expert header."""
 
         for index, raw_line in enumerate(lines):
@@ -286,7 +286,7 @@ class TranscriptParser:
     @staticmethod
     def _extract_header_metadata(
         header_match: re.Match[str],
-    ) -> Tuple[str, str, str]:
+    ) -> tuple[str, str, str]:
         """
         Extract metadata from compact header.
 
@@ -327,17 +327,17 @@ class TranscriptParser:
 
     def _extract_explicit_metadata(
         self,
-        lines: List[str],
-    ) -> Tuple[
-        Optional[str],
-        Optional[str],
-        Optional[str],
+        lines: list[str],
+    ) -> tuple[
+        str | None,
+        str | None,
+        str | None,
     ]:
         """Extract optional explicit metadata fields."""
 
-        expert_name: Optional[str] = None
-        expert_role: Optional[str] = None
-        market: Optional[str] = None
+        expert_name: str | None = None
+        expert_role: str | None = None
+        market: str | None = None
 
         for raw_line in lines:
             line = raw_line.strip()
@@ -380,13 +380,13 @@ class TranscriptParser:
 
     def _parse_segments(
         self,
-        lines: List[str],
+        lines: list[str],
         document_id: str,
         source_file: str,
         expert_name: str,
         expert_role: str,
         market: str,
-    ) -> List[TranscriptSegment]:
+    ) -> list[TranscriptSegment]:
         """
         Parse timestamped transcript blocks.
 
@@ -394,11 +394,11 @@ class TranscriptParser:
         performed after the complete transcript has been parsed.
         """
 
-        raw_segments: List[dict] = []
+        raw_segments: list[dict] = []
 
-        current_timestamp: Optional[str] = None
-        current_seconds: Optional[float] = None
-        current_text_lines: List[str] = []
+        current_timestamp: str | None = None
+        current_seconds: float | None = None
+        current_text_lines: list[str] = []
         current_speaker: str = "Expert"
 
         def flush_segment() -> None:
@@ -530,7 +530,7 @@ class TranscriptParser:
             )
         )
 
-        segments: List[TranscriptSegment] = []
+        segments: list[TranscriptSegment] = []
 
         for index, item in enumerate(
             raw_segments,
@@ -580,7 +580,7 @@ class TranscriptParser:
 
     @staticmethod
     def _assign_segment_boundaries(
-        segments: List[TranscriptSegment],
+        segments: list[TranscriptSegment],
     ) -> None:
         """
         Set each segment's end timestamp to the next segment's start.
@@ -611,7 +611,7 @@ class TranscriptParser:
     def _parse_timestamp(
         self,
         value: str,
-    ) -> Optional[float]:
+    ) -> float | None:
         """Convert MM:SS or HH:MM:SS into seconds."""
 
         value = value.strip()

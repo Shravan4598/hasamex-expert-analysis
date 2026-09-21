@@ -20,10 +20,11 @@ import logging
 import re
 import string
 import unicodedata
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from enum import Enum
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ class QuoteVerificationResult:
     verified: bool
     similarity: float
     confidence: float
-    matched_text: Optional[str] = None
+    matched_text: str | None = None
     reason: str = ""
 
     @property
@@ -163,14 +164,14 @@ def normalize_quote(text: str) -> str:
 
 def _build_normalized_character_map(
     source: str,
-) -> Tuple[str, List[int]]:
+) -> tuple[str, list[int]]:
     """
     Build normalized source text and map normalized characters back to
     positions in the original source.
     """
 
-    normalized_parts: List[str] = []
-    positions: List[int] = []
+    normalized_parts: list[str] = []
+    positions: list[int] = []
 
     for index, character in enumerate(source):
         normalized = normalize_quote(character)
@@ -188,7 +189,7 @@ def _build_normalized_character_map(
 def _find_normalized_substring(
     source: str,
     candidate: str,
-) -> Optional[str]:
+) -> str | None:
     """
     Find a candidate inside source after deterministic normalization.
 
@@ -301,8 +302,7 @@ def _best_similarity(
                 autojunk=False,
             ).ratio()
 
-            if ratio > best:
-                best = ratio
+            best = max(best, ratio)
 
     return max(
         0.0,
@@ -498,9 +498,7 @@ def verify_quote_against_sources(
         similarity_threshold=similarity_threshold
     )
 
-    best_result: Optional[
-        QuoteVerificationResult
-    ] = None
+    best_result: QuoteVerificationResult | None = None
 
     for source in sources:
         result = verifier.verify(
@@ -526,7 +524,7 @@ def verify_quotes(
     similarity_threshold: float = (
         QuoteVerifier.DEFAULT_SIMILARITY_THRESHOLD
     ),
-) -> List[QuoteVerificationResult]:
+) -> list[QuoteVerificationResult]:
     """Verify multiple quotes against one transcript."""
 
     verifier = QuoteVerifier(

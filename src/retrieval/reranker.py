@@ -26,12 +26,11 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from exception import SensorException
 from logger import logging
-
 from src.config import Settings, get_settings
 from src.models import RetrievalResult
 
@@ -587,8 +586,7 @@ class RetrievalReranker:
         normalized = normalized.replace("’", "'")
         normalized = normalized.replace(".", " ")
 
-        if normalized.startswith("dr "):
-            normalized = normalized[3:]
+        normalized = normalized.removeprefix("dr ")
 
         return " ".join(normalized.split())
 

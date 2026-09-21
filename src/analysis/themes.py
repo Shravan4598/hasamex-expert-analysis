@@ -27,12 +27,12 @@ The intended workflow is:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from exception import SensorException
 from logger import logging
-
 from src.analysis.llm import GeminiLLMService, get_llm_service
 from src.config import Settings, get_settings
 from src.evidence.citation import CitationBuilder

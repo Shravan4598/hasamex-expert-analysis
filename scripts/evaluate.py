@@ -40,13 +40,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from logger import logging
-
 from src.analysis.disagreements import DisagreementAnalyzer
 from src.analysis.interview_guide import InterviewGuideAnalyzer
 from src.analysis.llm import GeminiLLM

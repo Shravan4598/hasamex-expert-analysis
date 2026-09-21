@@ -24,7 +24,6 @@ from typing import Final
 
 from exception import SensorException
 from logger import logging
-
 from src.models import TranscriptChunk, TranscriptSegment
 
 logger = logging.getLogger(__name__)
@@ -593,7 +592,7 @@ def _sys_module():
 
 
 __all__ = [
-    "DEFAULT_CHUNK_SIZE",
     "DEFAULT_CHUNK_OVERLAP",
+    "DEFAULT_CHUNK_SIZE",
     "TranscriptChunker",
 ]

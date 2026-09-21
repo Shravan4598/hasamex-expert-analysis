@@ -1,5 +1,5 @@
 import sys
-import os
+
 
 def error_message_detail(error, error_detail: sys):
     _, _, exc_tb = error_detail.exc_info()
@@ -7,7 +7,7 @@ def error_message_detail(error, error_detail: sys):
     error_message = (
         f"Error occurred in file [{file_name}] "
         f"at line [{exc_tb.tb_lineno}] "
-        f"with message: [{str(error)}]"
+        f"with message: [{str(error)!s}]"
     )
     return error_message
 
@@ -15,7 +15,10 @@ def error_message_detail(error, error_detail: sys):
 class SensorException(Exception):
     def __init__(self, error_message, error_detail: sys):
         super().__init__(error_message)
-        self.error_message = error_message_detail(error_message, error_detail=error_detail)
+        self.error_message = error_message_detail(
+            error_message,
+            error_detail=error_detail,
+        )
 
     def __str__(self):
         return self.error_message

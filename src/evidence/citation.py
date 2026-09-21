@@ -21,7 +21,6 @@ from dataclasses import dataclass
 
 from exception import SensorException
 from logger import logging
-
 from src.models import Citation, Evidence, EvidenceStatus
 
 logger = logging.getLogger(__name__)

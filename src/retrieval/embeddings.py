@@ -11,15 +11,14 @@ similarity, which is equivalent to cosine similarity for normalized vectors.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import lru_cache
-from typing import Sequence
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from exception import SensorException
 from logger import logging
-
 from src.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)

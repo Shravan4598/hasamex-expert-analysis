@@ -28,7 +28,6 @@ from google.genai import types
 
 from exception import SensorException
 from logger import logging
-
 from src.config import Settings, get_settings
 from src.models import Evidence, GroundedAnswer
 
@@ -805,8 +804,8 @@ def _sys_module():
 
 
 __all__ = [
+    "SYSTEM_INSTRUCTION",
     "GeminiLLMService",
     "LLMGenerationConfig",
-    "SYSTEM_INSTRUCTION",
     "get_llm_service",
 ]

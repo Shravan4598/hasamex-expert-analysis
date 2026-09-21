@@ -1,3 +1,4 @@
+
 """
 Core Pydantic models for Hasamex Expert Analysis.
 
@@ -12,10 +13,9 @@ and evidence traceability available throughout the application.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-
 
 # ======================================================================
 # ENUMS
@@ -67,7 +67,7 @@ class TranscriptMetadata(BaseModel):
     source_file: str = Field(..., min_length=1)
 
     expert_name: str = Field(..., min_length=1)
-    expert_role: Optional[str] = None
+    expert_role: str | None = None
     market: str = Field(..., min_length=1)
 
     duration_seconds: float = Field(
@@ -94,9 +94,9 @@ class TranscriptSegment(BaseModel):
 
     source_file: str = Field(..., min_length=1)
 
-    expert_name: Optional[str] = None
-    expert_role: Optional[str] = None
-    market: Optional[str] = None
+    expert_name: str | None = None
+    expert_role: str | None = None
+    market: str | None = None
 
     speaker: str = Field(
         default="Expert",
@@ -108,20 +108,20 @@ class TranscriptSegment(BaseModel):
     text: str = Field(..., min_length=1)
 
     start_timestamp: str = Field(..., min_length=1)
-    end_timestamp: Optional[str] = None
+    end_timestamp: str | None = None
 
     start_seconds: float = Field(
         ...,
         ge=0.0,
     )
 
-    end_seconds: Optional[float] = Field(
+    end_seconds: float | None = Field(
         default=None,
         ge=0.0,
     )
 
     @property
-    def duration_seconds(self) -> Optional[float]:
+    def duration_seconds(self) -> float | None:
         """Return segment duration when an end timestamp exists."""
 
         if self.end_seconds is None:
@@ -129,8 +129,7 @@ class TranscriptSegment(BaseModel):
 
         return max(
             0.0,
-            float(self.end_seconds)
-            - float(self.start_seconds),
+            float(self.end_seconds) - float(self.start_seconds),
         )
 
 
@@ -146,24 +145,24 @@ class TranscriptChunk(BaseModel):
     document_id: str = Field(..., min_length=1)
     source_file: str = Field(..., min_length=1)
 
-    expert_name: Optional[str] = None
-    expert_role: Optional[str] = None
-    market: Optional[str] = None
+    expert_name: str | None = None
+    expert_role: str | None = None
+    market: str | None = None
 
     text: str = Field(..., min_length=1)
 
-    start_timestamp: Optional[str] = None
-    end_timestamp: Optional[str] = None
+    start_timestamp: str | None = None
+    end_timestamp: str | None = None
 
-    start_seconds: Optional[float] = None
-    end_seconds: Optional[float] = None
+    start_seconds: float | None = None
+    end_seconds: float | None = None
 
-    segment_ids: List[str] = Field(
-        default_factory=list
+    segment_ids: list[str] = Field(
+        default_factory=list,
     )
 
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
     )
 
 
@@ -186,35 +185,35 @@ class RetrievalResult(BaseModel):
     )
 
     # Full chunk when available from the vector store.
-    chunk: Optional[TranscriptChunk] = None
+    chunk: TranscriptChunk | None = None
 
     # Direct provenance fields are also retained because retrieval
     # results may be serialized independently of their chunk object.
-    chunk_id: Optional[str] = None
+    chunk_id: str | None = None
 
-    document_id: Optional[str] = None
-    source_file: Optional[str] = None
+    document_id: str | None = None
+    source_file: str | None = None
 
-    expert_name: Optional[str] = None
-    expert_role: Optional[str] = None
-    market: Optional[str] = None
+    expert_name: str | None = None
+    expert_role: str | None = None
+    market: str | None = None
 
-    text: Optional[str] = None
+    text: str | None = None
 
-    start_timestamp: Optional[str] = None
-    end_timestamp: Optional[str] = None
+    start_timestamp: str | None = None
+    end_timestamp: str | None = None
 
-    start_seconds: Optional[float] = None
-    end_seconds: Optional[float] = None
+    start_seconds: float | None = None
+    end_seconds: float | None = None
 
     # Retrieval ranking/provenance.
     score: float = 0.0
 
-    retrieval_score: Optional[float] = None
-    rerank_score: Optional[float] = None
+    retrieval_score: float | None = None
+    rerank_score: float | None = None
 
-    retrieval_rank: Optional[int] = None
-    rank: Optional[int] = None
+    retrieval_rank: int | None = None
+    rank: int | None = None
 
 
 # ======================================================================
@@ -234,21 +233,21 @@ class Evidence(BaseModel):
 
     document_id: str = Field(..., min_length=1)
 
-    chunk_id: Optional[str] = None
+    chunk_id: str | None = None
 
     source_file: str = Field(..., min_length=1)
 
-    expert_name: Optional[str] = None
-    expert_role: Optional[str] = None
-    market: Optional[str] = None
+    expert_name: str | None = None
+    expert_role: str | None = None
+    market: str | None = None
 
     quote: str = Field(..., min_length=1)
 
-    start_timestamp: Optional[str] = None
-    end_timestamp: Optional[str] = None
+    start_timestamp: str | None = None
+    end_timestamp: str | None = None
 
-    start_seconds: Optional[float] = None
-    end_seconds: Optional[float] = None
+    start_seconds: float | None = None
+    end_seconds: float | None = None
 
     status: EvidenceStatus = EvidenceStatus.UNVERIFIED
 
@@ -267,28 +266,28 @@ class Citation(BaseModel):
         extra="allow",
     )
 
-    citation_id: Optional[str] = None
+    citation_id: str | None = None
 
-    document_id: Optional[str] = None
-    chunk_id: Optional[str] = None
+    document_id: str | None = None
+    chunk_id: str | None = None
 
-    source_file: Optional[str] = None
+    source_file: str | None = None
 
-    expert_name: Optional[str] = None
-    expert_role: Optional[str] = None
-    market: Optional[str] = None
+    expert_name: str | None = None
+    expert_role: str | None = None
+    market: str | None = None
 
-    quote: Optional[str] = None
+    quote: str | None = None
 
-    start_timestamp: Optional[str] = None
-    end_timestamp: Optional[str] = None
+    start_timestamp: str | None = None
+    end_timestamp: str | None = None
 
-    start_seconds: Optional[float] = None
-    end_seconds: Optional[float] = None
+    start_seconds: float | None = None
+    end_seconds: float | None = None
 
-    evidence_id: Optional[str] = None
+    evidence_id: str | None = None
 
-    text: Optional[str] = None
+    text: str | None = None
 
 
 # ======================================================================
@@ -309,9 +308,9 @@ class InterviewQuestion(BaseModel):
     question: str = Field(..., min_length=1)
 
     # Optional numeric ordering used by the interview guide.
-    question_number: Optional[int] = None
+    question_number: int | None = None
 
-    category: Optional[str] = None
+    category: str | None = None
 
 
 # ======================================================================
@@ -327,18 +326,18 @@ class GroundedAnswer(BaseModel):
         extra="allow",
     )
 
-    question_id: Optional[str] = None
+    question_id: str | None = None
 
     question: str = Field(..., min_length=1)
 
     answer: str = Field(..., min_length=1)
 
-    evidence: List[Evidence] = Field(
-        default_factory=list
+    evidence: list[Evidence] = Field(
+        default_factory=list,
     )
 
-    citations: List[Citation] = Field(
-        default_factory=list
+    citations: list[Citation] = Field(
+        default_factory=list,
     )
 
     confidence: float = Field(
@@ -347,13 +346,11 @@ class GroundedAnswer(BaseModel):
         le=1.0,
     )
 
-    evidence_status: EvidenceStatus = (
-        EvidenceStatus.INSUFFICIENT
-    )
+    evidence_status: EvidenceStatus = EvidenceStatus.INSUFFICIENT
 
     insufficient_evidence: bool = False
 
-    reasoning: Optional[str] = None
+    reasoning: str | None = None
 
 
 # ======================================================================
@@ -384,9 +381,9 @@ class ThemeEvidence(BaseModel):
     quote: str = Field(..., min_length=1)
 
     # Optional analytical fields.
-    evidence: Optional[str] = None
+    evidence: str | None = None
 
-    relevance: Optional[float] = Field(
+    relevance: float | None = Field(
         default=None,
         ge=0.0,
         le=1.0,
@@ -406,19 +403,19 @@ class Theme(BaseModel):
         extra="allow",
     )
 
-    theme_id: Optional[str] = None
+    theme_id: str | None = None
 
     # Test/UI contract uses "name"; production code may use "theme".
     name: str = Field(..., min_length=1)
 
     summary: str = Field(..., min_length=1)
 
-    experts: List[str] = Field(
-        default_factory=list
+    experts: list[str] = Field(
+        default_factory=list,
     )
 
-    evidence: List[ThemeEvidence] = Field(
-        default_factory=list
+    evidence: list[ThemeEvidence] = Field(
+        default_factory=list,
     )
 
     @property
@@ -449,10 +446,8 @@ class ExpertPosition(BaseModel):
 
     # ThemeEvidence is accepted here because cross-expert
     # disagreement analysis may use lightweight source evidence.
-    evidence: List[
-        Union[Evidence, ThemeEvidence]
-    ] = Field(
-        default_factory=list
+    evidence: list[Evidence | ThemeEvidence] = Field(
+        default_factory=list,
     )
 
 
@@ -469,24 +464,22 @@ class Disagreement(BaseModel):
         extra="allow",
     )
 
-    disagreement_id: Optional[str] = None
+    disagreement_id: str | None = None
 
     topic: str = Field(..., min_length=1)
 
     difference_type: DifferenceType
 
-    description: Optional[str] = None
+    description: str | None = None
 
-    summary: Optional[str] = None
+    summary: str | None = None
 
-    positions: List[ExpertPosition] = Field(
-        default_factory=list
+    positions: list[ExpertPosition] = Field(
+        default_factory=list,
     )
 
-    evidence: List[
-        Union[Evidence, ThemeEvidence]
-    ] = Field(
-        default_factory=list
+    evidence: list[Evidence | ThemeEvidence] = Field(
+        default_factory=list,
     )
 
 
@@ -511,13 +504,13 @@ class SearchQuery(BaseModel):
         le=100,
     )
 
-    market: Optional[str] = None
+    market: str | None = None
 
-    expert_name: Optional[str] = None
+    expert_name: str | None = None
 
     # Backward-compatible filter names.
-    market_filter: Optional[str] = None
-    expert_filter: Optional[str] = None
+    market_filter: str | None = None
+    expert_filter: str | None = None
 
 
 # ======================================================================
@@ -539,24 +532,24 @@ class EvaluationCase(BaseModel):
 
     question: str = Field(..., min_length=1)
 
-    expert_name: Optional[str] = None
-    market: Optional[str] = None
+    expert_name: str | None = None
+    market: str | None = None
 
-    expected_expert: Optional[str] = None
-    expected_market: Optional[str] = None
+    expected_expert: str | None = None
+    expected_market: str | None = None
 
-    expected_timestamp: Optional[str] = None
+    expected_timestamp: str | None = None
 
-    expected_keywords: List[str] = Field(
-        default_factory=list
+    expected_keywords: list[str] = Field(
+        default_factory=list,
     )
 
-    expected_quote_fragments: List[str] = Field(
-        default_factory=list
+    expected_quote_fragments: list[str] = Field(
+        default_factory=list,
     )
 
     # Compatibility with implementations that use one complete quote.
-    expected_quote: Optional[str] = None
+    expected_quote: str | None = None
 
 
 # ======================================================================
@@ -597,8 +590,8 @@ class EvaluationResult(BaseModel):
         le=1.0,
     )
 
-    failure_reasons: List[str] = Field(
-        default_factory=list
+    failure_reasons: list[str] = Field(
+        default_factory=list,
     )
 
     # Detailed evaluation metrics.
@@ -652,3 +645,4 @@ class ApplicationStats(BaseModel):
         default=0,
         ge=0,
     )
+

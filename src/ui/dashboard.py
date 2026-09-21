@@ -15,13 +15,12 @@ Those responsibilities belong to the application/service layers.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 import streamlit as st
 
 from logger import logging
-
 from src.models import ApplicationStats
 
 logger = logging.getLogger(__name__)

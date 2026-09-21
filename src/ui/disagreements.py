@@ -34,7 +34,6 @@ from typing import Any
 import streamlit as st
 
 from logger import logging
-
 from src.analysis.disagreements import (
     DisagreementAnalyzer,
 )
