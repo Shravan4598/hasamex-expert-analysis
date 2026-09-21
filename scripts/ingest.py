@@ -100,14 +100,17 @@ def _run_pipeline(
     if not files:
         raise IngestionPipelineError(
             f"No supported transcript files were found in '{raw_directory}'. "
-            f"Expected .txt or .md files."
+            "Expected .txt or .md files."
         )
 
     print(f"Found {len(files)} transcript file(s).")
 
     all_chunks = []
 
-    for file_index, (filename, transcript_content) in enumerate(files.items(), start=1):
+    for file_index, (filename, transcript_content) in enumerate(
+        files.items(),
+        start=1,
+    ):
         print(f"\n[{file_index}/{len(files)}] Processing: {filename}")
 
         try:
@@ -150,7 +153,8 @@ def _run_pipeline(
 
     if not all_chunks:
         raise IngestionPipelineError(
-            "The ingestion pipeline did not produce any timestamp-aware transcript chunks."
+            "The ingestion pipeline did not produce any timestamp-aware "
+            "transcript chunks."
         )
 
     print(f"\nTotal chunks: {len(all_chunks)}")
@@ -176,7 +180,7 @@ def _build_vector_store(
     chunks: list,
     force: bool,
 ) -> None:
-    """Build and persist the FAISS vector index using the store's embedding service."""
+    """Build and persist the FAISS vector index."""
     print("\nPreparing FAISS vector index...")
 
     vector_store_exists = _vector_store_exists(vector_store)
@@ -229,7 +233,9 @@ def _resolve_data_directory(
         raise IngestionPipelineError(f"Transcript directory does not exist: {path}")
 
     if not path.is_dir():
-        raise IngestionPipelineError(f"Transcript input path is not a directory: {path}")
+        raise IngestionPipelineError(
+            f"Transcript input path is not a directory: {path}"
+        )
 
     return path
 
@@ -247,7 +253,7 @@ def _print_summary(
 
     try:
         vector_count = vector_store.size
-    except Exception:
+    except AttributeError:
         vector_count = chunk_count
 
     print(f"Vector entries : {vector_count}")
@@ -260,14 +266,20 @@ def _print_summary(
 def _parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Parse Hasamex expert transcripts and build the persistent FAISS vector index."
+        description=(
+            "Parse Hasamex expert transcripts and build the persistent "
+            "FAISS vector index."
+        )
     )
 
     parser.add_argument(
         "--data-dir",
         type=str,
         default=None,
-        help="Directory containing transcript files. Defaults to RAW_DATA_DIR from application settings.",
+        help=(
+            "Directory containing transcript files. Defaults to "
+            "RAW_DATA_DIR from application settings."
+        ),
     )
 
     parser.add_argument(
@@ -279,7 +291,10 @@ def _parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Force rebuilding the vector index even when an existing index is present.",
+        help=(
+            "Force rebuilding the vector index even when an existing "
+            "index is present."
+        ),
     )
 
     return parser.parse_args(argv)
