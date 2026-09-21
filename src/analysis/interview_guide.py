@@ -27,7 +27,6 @@ from src.models import (
     GroundedAnswer,
     InterviewQuestion,
     RetrievalResult,
-    TranscriptSegment,
 )
 from src.retrieval.reranker import RetrievalReranker
 from src.retrieval.retriever import RetrievalFilters, Retriever
@@ -46,9 +45,7 @@ INTERVIEW_QUESTIONS: tuple[InterviewQuestion, ...] = (
     ),
     InterviewQuestion(
         question_id="Q2",
-        question=(
-            "What are the main barriers to adoption?"
-        ),
+        question="What are the main barriers to adoption?",
         topic="Adoption barriers",
     ),
     InterviewQuestion(
@@ -86,9 +83,7 @@ INTERVIEW_QUESTIONS: tuple[InterviewQuestion, ...] = (
 
 @dataclass(frozen=True)
 class InterviewAnalysisConfig:
-    """
-    Configuration for interview-guide analysis.
-    """
+    """Configuration for interview-guide analysis."""
 
     retrieval_top_k: int
     rerank_top_k: int
@@ -129,18 +124,14 @@ class InterviewGuideAnalyzer:
         citation_builder: CitationBuilder | None = None,
         settings: Settings | None = None,
     ) -> None:
-        """
-        Initialize the interview-guide analyzer.
-        """
+        """Initialize the interview-guide analyzer."""
         try:
             self.settings = settings or get_settings()
 
             self.retriever = retriever
             self.reranker = reranker
             self.llm_service = llm_service or get_llm_service()
-            self.quote_verifier = (
-                quote_verifier or QuoteVerifier()
-            )
+            self.quote_verifier = quote_verifier or QuoteVerifier()
             self.citation_builder = (
                 citation_builder or CitationBuilder()
             )
@@ -162,18 +153,14 @@ class InterviewGuideAnalyzer:
             ) from error
 
     def get_questions(self) -> list[InterviewQuestion]:
-        """
-        Return the six official interview-guide questions.
-        """
+        """Return the six official interview-guide questions."""
         return list(INTERVIEW_QUESTIONS)
 
     def get_question(
         self,
         question_id: str,
     ) -> InterviewQuestion:
-        """
-        Retrieve one interview question by ID.
-        """
+        """Retrieve one interview question by ID."""
         normalized_id = question_id.strip().upper()
 
         for question in INTERVIEW_QUESTIONS:
@@ -214,13 +201,9 @@ class InterviewGuideAnalyzer:
                 top_k=self.config.rerank_top_k,
             )
 
-            evidence = self._results_to_evidence(
-                reranked_results
-            )
+            evidence = self._results_to_evidence(reranked_results)
 
-            evidence = self._select_sufficient_evidence(
-                evidence
-            )
+            evidence = self._select_sufficient_evidence(evidence)
 
             if len(evidence) < self.config.minimum_evidence:
                 return GroundedAnswer(
@@ -298,9 +281,7 @@ class InterviewGuideAnalyzer:
         question: InterviewQuestion,
         expert_name: str,
     ) -> GroundedAnswer:
-        """
-        Analyze one interview question for one expert.
-        """
+        """Analyze one interview question for one expert."""
         filters = RetrievalFilters(
             expert_name=expert_name
         )
@@ -315,9 +296,7 @@ class InterviewGuideAnalyzer:
         question: InterviewQuestion,
         market: str,
     ) -> GroundedAnswer:
-        """
-        Analyze one interview question for one market.
-        """
+        """Analyze one interview question for one market."""
         filters = RetrievalFilters(
             market=market
         )
@@ -332,9 +311,7 @@ class InterviewGuideAnalyzer:
         *,
         filters: RetrievalFilters | None = None,
     ) -> list[GroundedAnswer]:
-        """
-        Analyze all six interview-guide questions.
-        """
+        """Analyze all six interview-guide questions."""
         results: list[GroundedAnswer] = []
 
         for question in INTERVIEW_QUESTIONS:
@@ -351,9 +328,7 @@ class InterviewGuideAnalyzer:
         self,
         expert_name: str,
     ) -> list[GroundedAnswer]:
-        """
-        Answer all interview-guide questions for one expert.
-        """
+        """Answer all interview-guide questions for one expert."""
         return self.analyze_all_questions(
             filters=RetrievalFilters(
                 expert_name=expert_name
@@ -364,9 +339,7 @@ class InterviewGuideAnalyzer:
         self,
         market: str,
     ) -> list[GroundedAnswer]:
-        """
-        Answer all interview-guide questions for one market.
-        """
+        """Answer all interview-guide questions for one market."""
         return self.analyze_all_questions(
             filters=RetrievalFilters(
                 market=market
@@ -489,16 +462,13 @@ class InterviewGuideAnalyzer:
                     "Evidence failed quote verification: %s",
                     item.evidence_id,
                 )
-
                 continue
 
             verified.append(
                 item.model_copy(
                     update={
                         "status": result.status,
-                        "verification_message": (
-                            result.message
-                        ),
+                        "verification_message": result.message,
                     }
                 )
             )
@@ -511,9 +481,7 @@ class InterviewGuideAnalyzer:
         evidence: list[Evidence],
         citations: list[Citation],
     ) -> GroundedAnswer:
-        """
-        Apply application-level evidence safeguards to an LLM answer.
-        """
+        """Apply application-level evidence safeguards to an LLM answer."""
         if not evidence:
             return grounded_answer.model_copy(
                 update={
@@ -575,9 +543,7 @@ class InterviewGuideAnalyzer:
     def _calculate_evidence_coverage(
         evidence: list[Evidence],
     ) -> float:
-        """
-        Calculate the fraction of evidence items that passed verification.
-        """
+        """Calculate the fraction of evidence items that passed verification."""
         if not evidence:
             return 0.0
 
@@ -591,18 +557,14 @@ class InterviewGuideAnalyzer:
 
 
 def get_interview_questions() -> list[InterviewQuestion]:
-    """
-    Return the complete official interview guide.
-    """
+    """Return the complete official interview guide."""
     return list(INTERVIEW_QUESTIONS)
 
 
 def get_interview_question(
     question_id: str,
 ) -> InterviewQuestion:
-    """
-    Return one official interview question.
-    """
+    """Return one official interview question."""
     normalized_id = question_id.strip().upper()
 
     for question in INTERVIEW_QUESTIONS:
