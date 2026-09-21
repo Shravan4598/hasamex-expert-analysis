@@ -1,0 +1,432 @@
+{
+  "cases": [
+    {
+      "case_id": "q1-france-adoption",
+      "case_type": "qa",
+      "question": "How would you describe current adoption of robotic surgery in France?",
+      "expert_name": "Dr. Jean Martin",
+      "market": "France",
+      "expected_expert": "Dr. Jean Martin",
+      "expected_market": "France",
+      "expected_timestamp": "00:18",
+      "expected_keywords": [
+        "growing",
+        "larger",
+        "academic",
+        "private",
+        "smaller"
+      ],
+      "expected_quote_fragments": [
+        "adoption is growing",
+        "smaller regional hospitals"
+      ]
+    },
+    {
+      "case_id": "q1-germany-adoption",
+      "case_type": "qa",
+      "question": "How would you describe current adoption of robotic surgery in Germany?",
+      "expert_name": "Anna Keller",
+      "market": "Germany",
+      "expected_expert": "Anna Keller",
+      "expected_market": "Germany",
+      "expected_timestamp": "00:16",
+      "expected_keywords": [
+        "growing",
+        "uneven",
+        "university hospitals",
+        "smaller"
+      ],
+      "expected_quote_fragments": [
+        "growing but uneven",
+        "large university hospitals"
+      ]
+    },
+    {
+      "case_id": "q1-uk-adoption",
+      "case_type": "qa",
+      "question": "How would you describe current adoption of robotic surgery in the UK?",
+      "expert_name": "Dr. Emily Carter",
+      "market": "UK",
+      "expected_expert": "Dr. Emily Carter",
+      "expected_market": "UK",
+      "expected_timestamp": "00:14",
+      "expected_keywords": [
+        "increasing",
+        "NHS",
+        "selected procedures",
+        "varies"
+      ],
+      "expected_quote_fragments": [
+        "increasing",
+        "access varies by hospital"
+      ]
+    },
+    {
+      "case_id": "q2-france-barriers",
+      "case_type": "qa",
+      "question": "What are the main barriers to adoption of robotic surgery in France?",
+      "expert_name": "Dr. Jean Martin",
+      "market": "France",
+      "expected_expert": "Dr. Jean Martin",
+      "expected_market": "France",
+      "expected_timestamp": "01:20",
+      "expected_keywords": [
+        "capital budget",
+        "approval",
+        "economic case"
+      ],
+      "expected_quote_fragments": [
+        "capital budget approval",
+        "economic case"
+      ]
+    },
+    {
+      "case_id": "q2-germany-barriers",
+      "case_type": "qa",
+      "question": "What are the main barriers to adoption of robotic surgery in Germany?",
+      "expert_name": "Anna Keller",
+      "market": "Germany",
+      "expected_expert": "Anna Keller",
+      "expected_market": "Germany",
+      "expected_timestamp": "01:10",
+      "expected_keywords": [
+        "cost",
+        "capital purchases",
+        "procedure volume",
+        "used enough"
+      ],
+      "expected_quote_fragments": [
+        "cost first barrier",
+        "proving the system will be used enough"
+      ]
+    },
+    {
+      "case_id": "q2-uk-barriers",
+      "case_type": "qa",
+      "question": "What are the main barriers to adoption of robotic surgery in the UK?",
+      "expert_name": "Dr. Emily Carter",
+      "market": "UK",
+      "expected_expert": "Dr. Emily Carter",
+      "expected_market": "UK",
+      "expected_timestamp": "01:05",
+      "expected_keywords": [
+        "funding",
+        "training",
+        "surgeons",
+        "theatre staff"
+      ],
+      "expected_quote_fragments": [
+        "funding important",
+        "training capacity equally important"
+      ]
+    },
+    {
+      "case_id": "q3-france-roi",
+      "case_type": "qa",
+      "question": "How important are hospital budgets and ROI in purchasing decisions in France?",
+      "expert_name": "Dr. Jean Martin",
+      "market": "France",
+      "expected_expert": "Dr. Jean Martin",
+      "expected_market": "France",
+      "expected_timestamp": "02:18",
+      "expected_keywords": [
+        "very important",
+        "utilisation",
+        "procedure volume",
+        "maintenance",
+        "payback"
+      ],
+      "expected_quote_fragments": [
+        "very important",
+        "payback"
+      ]
+    },
+    {
+      "case_id": "q3-germany-roi",
+      "case_type": "qa",
+      "question": "How important are hospital budgets and ROI in purchasing decisions in Germany?",
+      "expert_name": "Anna Keller",
+      "market": "Germany",
+      "expected_expert": "Anna Keller",
+      "expected_market": "Germany",
+      "expected_timestamp": "02:08",
+      "expected_keywords": [
+        "TCO",
+        "procedure volume",
+        "maintenance",
+        "service contracts",
+        "economic case"
+      ],
+      "expected_quote_fragments": [
+        "TCO",
+        "economic case decides approval"
+      ]
+    },
+    {
+      "case_id": "q3-uk-roi",
+      "case_type": "qa",
+      "question": "How important are hospital budgets and ROI in purchasing decisions in the UK?",
+      "expert_name": "Dr. Emily Carter",
+      "market": "UK",
+      "expected_expert": "Dr. Emily Carter",
+      "expected_market": "UK",
+      "expected_timestamp": "02:07",
+      "expected_keywords": [
+        "matters",
+        "patient outcomes",
+        "length of stay",
+        "surgeon recruitment",
+        "clinical position"
+      ],
+      "expected_quote_fragments": [
+        "not purely financial",
+        "patient outcomes"
+      ]
+    },
+    {
+      "case_id": "q4-france-training",
+      "case_type": "qa",
+      "question": "How important are surgeon training and clinical outcomes in France?",
+      "expert_name": "Dr. Jean Martin",
+      "market": "France",
+      "expected_expert": "Dr. Jean Martin",
+      "expected_market": "France",
+      "expected_timestamp": "03:10",
+      "expected_keywords": [
+        "training",
+        "first year",
+        "surgeons",
+        "utilisation",
+        "outcomes"
+      ],
+      "expected_quote_fragments": [
+        "matters especially in the first year",
+        "utilisation high"
+      ]
+    },
+    {
+      "case_id": "q4-germany-training",
+      "case_type": "qa",
+      "question": "How important are surgeon training and clinical outcomes in Germany?",
+      "expert_name": "Anna Keller",
+      "market": "Germany",
+      "expected_expert": "Anna Keller",
+      "expected_market": "Germany",
+      "expected_timestamp": "03:05",
+      "expected_keywords": [
+        "very important",
+        "operationally",
+        "utilisation",
+        "business case"
+      ],
+      "expected_quote_fragments": [
+        "very important operationally",
+        "poor utilisation"
+      ]
+    },
+    {
+      "case_id": "q4-uk-training",
+      "case_type": "qa",
+      "question": "How important are surgeon training and clinical outcomes in the UK?",
+      "expert_name": "Dr. Emily Carter",
+      "market": "UK",
+      "expected_expert": "Dr. Emily Carter",
+      "expected_market": "UK",
+      "expected_timestamp": "01:05",
+      "expected_keywords": [
+        "training capacity",
+        "surgeons",
+        "theatre staff",
+        "clinical"
+      ],
+      "expected_quote_fragments": [
+        "training capacity equally important",
+        "train surgeons"
+      ]
+    },
+    {
+      "case_id": "q5-france-outlook",
+      "case_type": "qa",
+      "question": "What adoption trend does Dr. Jean Martin expect over the next 3–5 years?",
+      "expert_name": "Dr. Jean Martin",
+      "market": "France",
+      "expected_expert": "Dr. Jean Martin",
+      "expected_market": "France",
+      "expected_timestamp": "05:07",
+      "expected_keywords": [
+        "continued increase",
+        "steady",
+        "15–20%",
+        "smaller hospitals"
+      ],
+      "expected_quote_fragments": [
+        "continued increase",
+        "15–20% more procedures annually"
+      ]
+    },
+    {
+      "case_id": "q5-germany-outlook",
+      "case_type": "qa",
+      "question": "What adoption trend does Anna Keller expect over the next 3–5 years?",
+      "expert_name": "Anna Keller",
+      "market": "Germany",
+      "expected_expert": "Anna Keller",
+      "expected_market": "Germany",
+      "expected_timestamp": "05:08",
+      "expected_keywords": [
+        "high single digits",
+        "low double digits",
+        "procedure volumes",
+        "gradual"
+      ],
+      "expected_quote_fragments": [
+        "high single digits",
+        "low double digits"
+      ]
+    },
+    {
+      "case_id": "q5-uk-outlook",
+      "case_type": "qa",
+      "question": "What adoption trend does Dr. Emily Carter expect over the next 3–5 years?",
+      "expert_name": "Dr. Emily Carter",
+      "market": "UK",
+      "expected_expert": "Dr. Emily Carter",
+      "expected_market": "UK",
+      "expected_timestamp": "04:06",
+      "expected_keywords": [
+        "positive",
+        "training",
+        "cost competitive",
+        "15%",
+        "areas"
+      ],
+      "expected_quote_fragments": [
+        "positive",
+        "above 15% annually in some areas"
+      ]
+    },
+    {
+      "case_id": "q6-france-timeline",
+      "case_type": "qa",
+      "question": "What is the typical hospital decision-making timeline for purchasing a new robotic system in France?",
+      "expert_name": "Dr. Jean Martin",
+      "market": "France",
+      "expected_expert": "Dr. Jean Martin",
+      "expected_market": "France",
+      "expected_timestamp": "06:08",
+      "expected_keywords": [
+        "six to twelve months",
+        "capital committee",
+        "budget cycle"
+      ],
+      "expected_quote_fragments": [
+        "six to twelve months",
+        "budget cycle"
+      ]
+    },
+    {
+      "case_id": "q6-germany-timeline",
+      "case_type": "qa",
+      "question": "What is the typical hospital decision-making timeline for purchasing a new robotic system in Germany?",
+      "expert_name": "Anna Keller",
+      "market": "Germany",
+      "expected_expert": "Anna Keller",
+      "expected_market": "Germany",
+      "expected_timestamp": "06:05",
+      "expected_keywords": [
+        "nine to eighteen months",
+        "procurement",
+        "clinical leadership",
+        "finance",
+        "management"
+      ],
+      "expected_quote_fragments": [
+        "nine to eighteen months",
+        "alignment"
+      ]
+    },
+    {
+      "case_id": "q6-uk-timeline",
+      "case_type": "qa",
+      "question": "What is the typical hospital decision-making timeline for purchasing a new robotic system in the UK?",
+      "expert_name": "Dr. Emily Carter",
+      "market": "UK",
+      "expected_expert": "Dr. Emily Carter",
+      "expected_market": "UK",
+      "expected_timestamp": "05:04",
+      "expected_keywords": [
+        "six to nine months",
+        "funding",
+        "capital cycle"
+      ],
+      "expected_quote_fragments": [
+        "six to nine months",
+        "new capital cycle"
+      ]
+    },
+    {
+      "case_id": "cross-market-roi",
+      "case_type": "qa",
+      "question": "How do the three experts describe the role of hospital economics and ROI in robotic surgery purchasing decisions?",
+      "expected_keywords": [
+        "ROI",
+        "economic",
+        "utilisation",
+        "clinical"
+      ],
+      "expected_expert": "Dr. Jean Martin"
+    },
+    {
+      "case_id": "cross-market-training",
+      "case_type": "qa",
+      "question": "What common role does training play in sustainable robotic surgery adoption across the three markets?",
+      "expected_keywords": [
+        "training",
+        "utilisation",
+        "surgeons"
+      ],
+      "expected_expert": "Dr. Emily Carter"
+    },
+    {
+      "case_id": "cross-market-growth",
+      "case_type": "qa",
+      "question": "What differences do the experts describe in expected robotic surgery procedure-volume growth?",
+      "expected_keywords": [
+        "15",
+        "20",
+        "single digits",
+        "double digits"
+      ]
+    },
+    {
+      "case_id": "cross-market-timeline",
+      "case_type": "qa",
+      "question": "What purchasing timelines do the experts describe across France, Germany, and the UK?",
+      "expected_keywords": [
+        "six",
+        "nine",
+        "twelve",
+        "eighteen",
+        "months"
+      ]
+    },
+    {
+      "case_id": "cross-market-adoption",
+      "case_type": "qa",
+      "question": "What common pattern do the three experts describe about current robotic surgery adoption?",
+      "expected_keywords": [
+        "growing",
+        "increasing",
+        "uneven",
+        "larger"
+      ]
+    },
+    {
+      "case_id": "insufficient-evidence",
+      "case_type": "qa",
+      "question": "What exact robotic surgery market share percentage does each country currently have?",
+      "expected_expert": null,
+      "expected_market": null
+    }
+  ]
+}
