@@ -1,0 +1,15 @@
+services:
+  hasamex-expert-analysis:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hasamex-expert-analysis
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./storage:/app/storage
+      - ./logs:/app/logs
+    restart: unless-stopped
