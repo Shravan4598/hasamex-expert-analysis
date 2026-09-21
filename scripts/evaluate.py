@@ -55,7 +55,6 @@ from src.analysis.themes import ThemeAnalyzer
 from src.config import Settings, get_settings
 from src.models import (
     EvaluationCase,
-    EvaluationResult,
     GroundedAnswer,
 )
 from src.retrieval.embeddings import EmbeddingService
