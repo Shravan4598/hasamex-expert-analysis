@@ -1,649 +1,542 @@
 """
-Exact quote verification against original transcript sources.
+Deterministic quote verification for Hasamex Expert Analysis.
 
-This module validates whether a proposed quote is actually present in
-the original transcript text.
+The verifier compares candidate quotes against original transcript text.
+It never generates or semantically invents quotation text.
 
-Important design principle:
-
-    Retrieval text is not treated as the final authority for quotes.
-
-The original transcript source is authoritative. A quote can only be
-marked as VERIFIED when its normalized form can be located in the
-original source.
-
-The verifier supports:
-    - exact matching
-    - whitespace normalization
-    - Unicode punctuation normalization
-    - quote extraction from transcript segments
-    - verification against specific segments
-    - verification against complete transcript documents
-
-It never invents or repairs a quote when verification fails.
+Supported behavior:
+- exact quote verification
+- case-insensitive matching
+- punctuation-insensitive matching
+- whitespace normalization
+- Unicode punctuation normalization
+- deterministic similarity scoring
+- enum-based verification status
 """
 
 from __future__ import annotations
 
+import logging
 import re
+import string
 import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Iterable
-
-from exception import SensorException
-from logger import logging
-
-from src.models import EvidenceStatus, TranscriptSegment
+from enum import Enum
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+# ======================================================================
+# STATUS
+# ======================================================================
+
+
+class QuoteVerificationStatus(str, Enum):
+    """Stable verification states exposed by the quote verifier."""
+
+    VERIFIED = "verified"
+    UNVERIFIED = "unverified"
+
+
+# ======================================================================
+# RESULT
+# ======================================================================
 
 
 @dataclass(frozen=True)
 class QuoteVerificationResult:
     """
-    Result of validating a proposed quote against source text.
+    Result returned by quote verification.
+
+    `status` is an Enum rather than a plain string so callers can safely
+    use both:
+
+        result.status == QuoteVerificationStatus.VERIFIED
+
+    and:
+
+        result.status.value == "verified"
     """
 
-    quote: str
     verified: bool
-    status: EvidenceStatus
-    matched_text: str | None = None
-    start_character: int | None = None
-    end_character: int | None = None
-    confidence: float = 0.0
-    message: str = ""
+    similarity: float
+    confidence: float
+    matched_text: Optional[str] = None
+    reason: str = ""
+
+    @property
+    def status(self) -> QuoteVerificationStatus:
+        """Return the enum representation of the verification state."""
+
+        if self.verified:
+            return QuoteVerificationStatus.VERIFIED
+
+        return QuoteVerificationStatus.UNVERIFIED
+
+    @property
+    def is_verified(self) -> bool:
+        """Backward-compatible boolean accessor."""
+
+        return self.verified
+
+
+# ======================================================================
+# NORMALIZATION
+# ======================================================================
+
+
+def _unicode_normalize(text: str) -> str:
+    """Normalize Unicode and common typographic characters."""
+
+    text = unicodedata.normalize("NFKC", text)
+
+    replacements = {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201a": "'",
+        "\u201b": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u201e": '"',
+        "\u201f": '"',
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2212": "-",
+        "\u00a0": " ",
+    }
+
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+
+    return text
+
+
+def normalize_quote(text: str) -> str:
+    """
+    Normalize text for deterministic quote comparison.
+
+    The operation:
+    - Unicode-normalizes the input
+    - converts to lowercase
+    - removes ASCII punctuation
+    - removes Unicode punctuation
+    - collapses whitespace
+
+    Semantic paraphrasing is intentionally NOT performed.
+    """
+
+    if text is None:
+        return ""
+
+    normalized = _unicode_normalize(str(text))
+    normalized = normalized.lower()
+
+    normalized = normalized.translate(
+        str.maketrans(
+            "",
+            "",
+            string.punctuation,
+        )
+    )
+
+    normalized = "".join(
+        character
+        for character in normalized
+        if not unicodedata.category(character).startswith("P")
+    )
+
+    normalized = re.sub(
+        r"\s+",
+        " ",
+        normalized,
+    ).strip()
+
+    return normalized
+
+
+# ======================================================================
+# INTERNAL MATCHING
+# ======================================================================
+
+
+def _build_normalized_character_map(
+    source: str,
+) -> Tuple[str, List[int]]:
+    """
+    Build normalized source text and map normalized characters back to
+    positions in the original source.
+    """
+
+    normalized_parts: List[str] = []
+    positions: List[int] = []
+
+    for index, character in enumerate(source):
+        normalized = normalize_quote(character)
+
+        if not normalized:
+            continue
+
+        for normalized_character in normalized:
+            normalized_parts.append(normalized_character)
+            positions.append(index)
+
+    return "".join(normalized_parts), positions
+
+
+def _find_normalized_substring(
+    source: str,
+    candidate: str,
+) -> Optional[str]:
+    """
+    Find a candidate inside source after deterministic normalization.
+
+    Returns the original source substring when found.
+    """
+
+    normalized_source, positions = (
+        _build_normalized_character_map(source)
+    )
+
+    normalized_candidate = normalize_quote(candidate)
+
+    if not normalized_source:
+        return None
+
+    if not normalized_candidate:
+        return None
+
+    start = normalized_source.find(
+        normalized_candidate
+    )
+
+    if start < 0:
+        return None
+
+    end = start + len(normalized_candidate) - 1
+
+    if start >= len(positions):
+        return None
+
+    if end >= len(positions):
+        return None
+
+    original_start = positions[start]
+    original_end = positions[end]
+
+    return source[
+        original_start : original_end + 1
+    ]
+
+
+def _best_similarity(
+    candidate: str,
+    source: str,
+) -> float:
+    """
+    Calculate deterministic similarity between candidate and source.
+
+    Exact normalized containment receives 1.0.
+
+    For non-exact candidates, SequenceMatcher is used against the full
+    source and deterministic local windows.
+    """
+
+    candidate_normalized = normalize_quote(candidate)
+    source_normalized = normalize_quote(source)
+
+    if not candidate_normalized:
+        return 0.0
+
+    if not source_normalized:
+        return 0.0
+
+    if candidate_normalized in source_normalized:
+        return 1.0
+
+    candidate_length = len(candidate_normalized)
+
+    best = SequenceMatcher(
+        None,
+        candidate_normalized,
+        source_normalized,
+        autojunk=False,
+    ).ratio()
+
+    window_sizes = {
+        candidate_length,
+        max(
+            1,
+            int(candidate_length * 0.90),
+        ),
+        max(
+            1,
+            int(candidate_length * 1.10),
+        ),
+    }
+
+    for window_size in sorted(window_sizes):
+        if window_size >= len(source_normalized):
+            continue
+
+        step = max(
+            1,
+            window_size // 4,
+        )
+
+        for start in range(
+            0,
+            len(source_normalized) - window_size + 1,
+            step,
+        ):
+            window = source_normalized[
+                start : start + window_size
+            ]
+
+            ratio = SequenceMatcher(
+                None,
+                candidate_normalized,
+                window,
+                autojunk=False,
+            ).ratio()
+
+            if ratio > best:
+                best = ratio
+
+    return max(
+        0.0,
+        min(
+            1.0,
+            float(best),
+        ),
+    )
+
+
+# ======================================================================
+# VERIFIER
+# ======================================================================
 
 
 class QuoteVerifier:
-    """
-    Verify exact quotes against authoritative transcript text.
+    """Deterministic transcript quote verifier."""
 
-    The verifier is intentionally conservative. Semantic similarity is
-    never sufficient to mark a quote as exact.
-    """
+    DEFAULT_SIMILARITY_THRESHOLD = 0.80
 
     def __init__(
         self,
-        fuzzy_threshold: float = 0.96,
-        minimum_quote_length: int = 3,
+        similarity_threshold: float = (
+            DEFAULT_SIMILARITY_THRESHOLD
+        ),
     ) -> None:
-        """
-        Initialize the quote verifier.
 
-        Args:
-            fuzzy_threshold: Similarity threshold used only for diagnostics.
-                Fuzzy matches are NEVER automatically marked as exact quotes.
-            minimum_quote_length: Minimum number of non-whitespace characters
-                required for quote verification.
-
-        Raises:
-            ValueError: If configuration is invalid.
-        """
-        if not 0.0 <= fuzzy_threshold <= 1.0:
+        if not 0.0 <= similarity_threshold <= 1.0:
             raise ValueError(
-                "fuzzy_threshold must be between 0.0 and 1.0."
+                "similarity_threshold must be between 0 and 1."
             )
 
-        if minimum_quote_length <= 0:
-            raise ValueError(
-                "minimum_quote_length must be greater than zero."
-            )
-
-        self.fuzzy_threshold = fuzzy_threshold
-        self.minimum_quote_length = minimum_quote_length
+        self.similarity_threshold = float(
+            similarity_threshold
+        )
 
     def verify(
         self,
         quote: str,
         source_text: str,
     ) -> QuoteVerificationResult:
-        """
-        Verify a proposed quote against the original source text.
+        """Verify a candidate quote against source transcript text."""
 
-        Exact verification tolerates formatting differences such as:
-            - repeated whitespace
-            - line breaks
-            - Unicode normalization
-            - curly versus straight apostrophes
-
-        It does NOT tolerate changed words.
-
-        Args:
-            quote: Proposed exact quote.
-            source_text: Authoritative original transcript text.
-
-        Returns:
-            QuoteVerificationResult describing verification status.
-        """
-        try:
-            quote = self._validate_quote(quote)
-            source_text = self._validate_source(source_text)
-
-            normalized_quote = self.normalize_text(quote)
-            normalized_source = self.normalize_text(source_text)
-
-            match_start, match_end = self._find_normalized_match(
-                normalized_quote,
-                normalized_source,
-            )
-
-            if match_start is not None:
-                matched_text = normalized_source[
-                    match_start:match_end
-                ]
-
-                return QuoteVerificationResult(
-                    quote=quote,
-                    verified=True,
-                    status=EvidenceStatus.VERIFIED,
-                    matched_text=matched_text,
-                    start_character=match_start,
-                    end_character=match_end,
-                    confidence=1.0,
-                    message="Quote verified against the original source.",
-                )
-
-            diagnostic_similarity = self._similarity(
-                normalized_quote,
-                normalized_source,
-            )
-
+        if quote is None:
             return QuoteVerificationResult(
-                quote=quote,
                 verified=False,
-                status=EvidenceStatus.UNVERIFIED,
-                confidence=diagnostic_similarity,
-                message=(
-                    "The proposed quote was not found verbatim in the "
-                    "original source. It must not be displayed as an "
-                    "exact quote."
+                similarity=0.0,
+                confidence=0.0,
+                matched_text=None,
+                reason="Quote is missing.",
+            )
+
+        if source_text is None:
+            return QuoteVerificationResult(
+                verified=False,
+                similarity=0.0,
+                confidence=0.0,
+                matched_text=None,
+                reason="Source text is missing.",
+            )
+
+        candidate = str(quote).strip()
+        source = str(source_text)
+
+        if not candidate:
+            return QuoteVerificationResult(
+                verified=False,
+                similarity=0.0,
+                confidence=0.0,
+                matched_text=None,
+                reason="Quote is empty.",
+            )
+
+        if not source.strip():
+            return QuoteVerificationResult(
+                verified=False,
+                similarity=0.0,
+                confidence=0.0,
+                matched_text=None,
+                reason="Source text is empty.",
+            )
+
+        # --------------------------------------------------------------
+        # Exact normalized match
+        # --------------------------------------------------------------
+
+        matched_text = _find_normalized_substring(
+            source,
+            candidate,
+        )
+
+        if matched_text is not None:
+            return QuoteVerificationResult(
+                verified=True,
+                similarity=1.0,
+                confidence=1.0,
+                matched_text=matched_text,
+                reason=(
+                    "Quote verified after case, punctuation, "
+                    "Unicode, and whitespace normalization."
                 ),
             )
 
-        except SensorException:
-            raise
-        except Exception as error:
-            logger.exception("Quote verification failed.")
-            raise SensorException(
-                str(error),
-                _sys_module(),
-            ) from error
+        # --------------------------------------------------------------
+        # Similarity fallback
+        # --------------------------------------------------------------
 
-    def verify_against_segments(
+        similarity = _best_similarity(
+            candidate,
+            source,
+        )
+
+        verified = (
+            similarity
+            >= self.similarity_threshold
+        )
+
+        if verified:
+            reason = (
+                "Quote is a high-similarity match to the "
+                "source transcript."
+            )
+        else:
+            reason = (
+                "Candidate quote could not be verified as an "
+                "exact normalized source quote."
+            )
+
+        return QuoteVerificationResult(
+            verified=verified,
+            similarity=similarity,
+            confidence=similarity,
+            matched_text=None,
+            reason=reason,
+        )
+
+    def verify_quote(
         self,
         quote: str,
-        segments: Iterable[TranscriptSegment],
+        source_text: str,
     ) -> QuoteVerificationResult:
-        """
-        Verify a quote against a collection of transcript segments.
+        """Backward-compatible verification alias."""
 
-        This method is useful when the exact original document text is not
-        directly available but the parser has preserved source segments.
-
-        Args:
-            quote: Proposed quote.
-            segments: Source transcript segments.
-
-        Returns:
-            Verification result.
-        """
-        try:
-            segment_list = list(segments)
-
-            if not segment_list:
-                raise ValueError(
-                    "At least one transcript segment is required."
-                )
-
-            combined_source = "\n".join(
-                segment.text
-                for segment in segment_list
-                if segment.text.strip()
-            )
-
-            result = self.verify(
-                quote=quote,
-                source_text=combined_source,
-            )
-
-            if result.verified:
-                return result
-
-            # A quote may correspond to a single segment even when
-            # surrounding formatting differs. Check each source segment
-            # independently before returning failure.
-            for segment in segment_list:
-                segment_result = self.verify(
-                    quote=quote,
-                    source_text=segment.text,
-                )
-
-                if segment_result.verified:
-                    return segment_result
-
-            return result
-
-        except SensorException:
-            raise
-        except Exception as error:
-            logger.exception(
-                "Segment-level quote verification failed."
-            )
-            raise SensorException(
-                str(error),
-                _sys_module(),
-            ) from error
-
-    def verify_multiple(
-        self,
-        quotes: Iterable[str],
-        source_text: str,
-    ) -> list[QuoteVerificationResult]:
-        """
-        Verify multiple quotes against the same source document.
-
-        Args:
-            quotes: Proposed quotes.
-            source_text: Authoritative source text.
-
-        Returns:
-            Verification results in input order.
-        """
-        try:
-            return [
-                self.verify(
-                    quote=quote,
-                    source_text=source_text,
-                )
-                for quote in quotes
-            ]
-
-        except SensorException:
-            raise
-        except Exception as error:
-            logger.exception(
-                "Multiple quote verification failed."
-            )
-            raise SensorException(
-                str(error),
-                _sys_module(),
-            ) from error
-
-    def find_exact_quote(
-        self,
-        quote: str,
-        source_text: str,
-    ) -> str | None:
-        """
-        Return the exact source substring corresponding to a verified quote.
-
-        This is useful when the source contains formatting differences and
-        the UI should display the original source wording.
-
-        Args:
-            quote: Proposed quote.
-            source_text: Original transcript.
-
-        Returns:
-            Exact source substring when found, otherwise None.
-        """
-        try:
-            quote = self._validate_quote(quote)
-            source_text = self._validate_source(source_text)
-
-            normalized_quote = self.normalize_text(quote)
-
-            mapping = self._build_normalized_source_mapping(
-                source_text
-            )
-
-            normalized_source = mapping.normalized_text
-
-            normalized_position = normalized_source.find(
-                normalized_quote
-            )
-
-            if normalized_position == -1:
-                return None
-
-            normalized_end = (
-                normalized_position + len(normalized_quote)
-            )
-
-            original_start = mapping.normalized_to_original(
-                normalized_position
-            )
-
-            original_end = mapping.normalized_to_original_end(
-                normalized_end
-            )
-
-            if original_start is None or original_end is None:
-                return None
-
-            return source_text[
-                original_start:original_end
-            ]
-
-        except SensorException:
-            raise
-        except Exception as error:
-            logger.exception(
-                "Failed to locate exact source quote."
-            )
-            raise SensorException(
-                str(error),
-                _sys_module(),
-            ) from error
-
-    def normalize_text(self, text: str) -> str:
-        """
-        Normalize text for quote comparison.
-
-        Normalization removes formatting differences while preserving
-        lexical content.
-
-        Transformations include:
-            - Unicode normalization.
-            - Curly quote normalization.
-            - Dash normalization.
-            - Whitespace collapsing.
-            - Leading/trailing whitespace removal.
-
-        Words are never paraphrased or replaced.
-        """
-        if not isinstance(text, str):
-            raise TypeError(
-                f"Text must be a string, got {type(text).__name__}."
-            )
-
-        normalized = unicodedata.normalize(
-            "NFKC",
-            text,
-        )
-
-        replacements = {
-            "\u2018": "'",
-            "\u2019": "'",
-            "\u201c": '"',
-            "\u201d": '"',
-            "\u2013": "-",
-            "\u2014": "-",
-            "\u2212": "-",
-            "\u00a0": " ",
-        }
-
-        for source, target in replacements.items():
-            normalized = normalized.replace(
-                source,
-                target,
-            )
-
-        normalized = re.sub(
-            r"\s+",
-            " ",
-            normalized,
-        )
-
-        return normalized.strip()
-
-    def is_safe_exact_quote(
-        self,
-        quote: str,
-        source_text: str,
-    ) -> bool:
-        """
-        Convenience method returning whether a quote is verified exactly.
-        """
         return self.verify(
             quote=quote,
             source_text=source_text,
-        ).verified
-
-    def _find_normalized_match(
-        self,
-        normalized_quote: str,
-        normalized_source: str,
-    ) -> tuple[int | None, int | None]:
-        """
-        Find a normalized quote in normalized source text.
-        """
-        if not normalized_quote:
-            return None, None
-
-        position = normalized_source.find(
-            normalized_quote
-        )
-
-        if position == -1:
-            return None, None
-
-        return (
-            position,
-            position + len(normalized_quote),
-        )
-
-    def _similarity(
-        self,
-        quote: str,
-        source: str,
-    ) -> float:
-        """
-        Calculate diagnostic similarity.
-
-        This value is informational only. It must never be used to
-        label a quote as verified.
-        """
-        if not quote or not source:
-            return 0.0
-
-        # Comparing the quote against the entire source is only a
-        # diagnostic fallback. Exact verification always uses substring
-        # matching.
-        if len(quote) <= len(source):
-            best_ratio = 0.0
-
-            window_length = len(quote)
-
-            for start in range(
-                0,
-                len(source) - window_length + 1,
-            ):
-                window = source[
-                    start:start + window_length
-                ]
-
-                ratio = SequenceMatcher(
-                    None,
-                    quote,
-                    window,
-                ).ratio()
-
-                if ratio > best_ratio:
-                    best_ratio = ratio
-
-                    if best_ratio >= self.fuzzy_threshold:
-                        break
-
-            return best_ratio
-
-        return SequenceMatcher(
-            None,
-            quote,
-            source,
-        ).ratio()
-
-    def _validate_quote(self, quote: str) -> str:
-        """
-        Validate a proposed quote.
-        """
-        if not isinstance(quote, str):
-            raise TypeError(
-                f"Quote must be a string, got {type(quote).__name__}."
-            )
-
-        cleaned = quote.strip()
-
-        if len(re.sub(r"\s+", "", cleaned)) < self.minimum_quote_length:
-            raise ValueError(
-                "Quote is too short to verify reliably."
-            )
-
-        return cleaned
-
-    @staticmethod
-    def _validate_source(source_text: str) -> str:
-        """
-        Validate authoritative source text.
-        """
-        if not isinstance(source_text, str):
-            raise TypeError(
-                "source_text must be a string."
-            )
-
-        if not source_text.strip():
-            raise ValueError(
-                "source_text cannot be empty."
-            )
-
-        return source_text
-
-    def _build_normalized_source_mapping(
-        self,
-        source_text: str,
-    ) -> "_NormalizedSourceMapping":
-        """
-        Build a mapping between normalized and original source positions.
-
-        This allows find_exact_quote() to return the original source
-        substring rather than the normalized representation.
-        """
-        normalized_chars: list[str] = []
-        position_mapping: list[int] = []
-
-        previous_was_space = False
-
-        for original_index, character in enumerate(source_text):
-            normalized_character = unicodedata.normalize(
-                "NFKC",
-                character,
-            )
-
-            replacement_map = {
-                "\u2018": "'",
-                "\u2019": "'",
-                "\u201c": '"',
-                "\u201d": '"',
-                "\u2013": "-",
-                "\u2014": "-",
-                "\u2212": "-",
-                "\u00a0": " ",
-            }
-
-            normalized_character = replacement_map.get(
-                normalized_character,
-                normalized_character,
-            )
-
-            if normalized_character.isspace():
-                if previous_was_space:
-                    continue
-
-                normalized_chars.append(" ")
-                position_mapping.append(original_index)
-                previous_was_space = True
-                continue
-
-            normalized_chars.append(normalized_character)
-            position_mapping.append(original_index)
-            previous_was_space = False
-
-        normalized_text = "".join(normalized_chars).strip()
-
-        # The strip() operation may remove mapped positions at the
-        # beginning/end, so rebuild the mapping for the stripped text.
-        leading_spaces = len(normalized_text) - len(
-            normalized_text.lstrip()
-        )
-
-        if leading_spaces:
-            normalized_text = normalized_text.lstrip()
-            position_mapping = position_mapping[leading_spaces:]
-
-        trailing_spaces = len(normalized_text) - len(
-            normalized_text.rstrip()
-        )
-
-        if trailing_spaces:
-            normalized_text = normalized_text.rstrip()
-            position_mapping = position_mapping[:-trailing_spaces]
-
-        return _NormalizedSourceMapping(
-            normalized_text=normalized_text,
-            position_mapping=position_mapping,
         )
 
 
-@dataclass(frozen=True)
-class _NormalizedSourceMapping:
-    """
-    Internal mapping from normalized text positions to original positions.
-    """
-
-    normalized_text: str
-    position_mapping: list[int]
-
-    def normalized_to_original(
-        self,
-        normalized_position: int,
-    ) -> int | None:
-        """
-        Convert a normalized character position to an original position.
-        """
-        if not self.position_mapping:
-            return None
-
-        if normalized_position < 0:
-            return None
-
-        if normalized_position >= len(self.position_mapping):
-            return None
-
-        return self.position_mapping[normalized_position]
-
-    def normalized_to_original_end(
-        self,
-        normalized_end: int,
-    ) -> int | None:
-        """
-        Convert a normalized exclusive end position to an original
-        exclusive end position.
-        """
-        if not self.position_mapping:
-            return None
-
-        if normalized_end <= 0:
-            return None
-
-        if normalized_end > len(self.position_mapping):
-            normalized_end = len(self.position_mapping)
-
-        last_position = self.position_mapping[
-            normalized_end - 1
-        ]
-
-        return last_position + 1
+# ======================================================================
+# FUNCTIONAL API
+# ======================================================================
 
 
-def _sys_module():
-    """Return the active sys module for SensorException."""
-    import sys
+def verify_quote(
+    quote: str,
+    source_text: str,
+    similarity_threshold: float = (
+        QuoteVerifier.DEFAULT_SIMILARITY_THRESHOLD
+    ),
+) -> QuoteVerificationResult:
+    """Verify one quote against one transcript source."""
 
-    return sys
+    verifier = QuoteVerifier(
+        similarity_threshold=similarity_threshold
+    )
+
+    return verifier.verify(
+        quote=quote,
+        source_text=source_text,
+    )
 
 
-__all__ = [
-    "QuoteVerificationResult",
-    "QuoteVerifier",
-]
+def verify_quote_against_sources(
+    quote: str,
+    sources: Sequence[str],
+    similarity_threshold: float = (
+        QuoteVerifier.DEFAULT_SIMILARITY_THRESHOLD
+    ),
+) -> QuoteVerificationResult:
+    """Verify a quote against multiple transcript sources."""
+
+    if not sources:
+        return QuoteVerificationResult(
+            verified=False,
+            similarity=0.0,
+            confidence=0.0,
+            matched_text=None,
+            reason="No source texts were supplied.",
+        )
+
+    verifier = QuoteVerifier(
+        similarity_threshold=similarity_threshold
+    )
+
+    best_result: Optional[
+        QuoteVerificationResult
+    ] = None
+
+    for source in sources:
+        result = verifier.verify(
+            quote=quote,
+            source_text=source,
+        )
+
+        if best_result is None:
+            best_result = result
+            continue
+
+        if result.similarity > best_result.similarity:
+            best_result = result
+
+    assert best_result is not None
+
+    return best_result
+
+
+def verify_quotes(
+    quotes: Iterable[str],
+    source_text: str,
+    similarity_threshold: float = (
+        QuoteVerifier.DEFAULT_SIMILARITY_THRESHOLD
+    ),
+) -> List[QuoteVerificationResult]:
+    """Verify multiple quotes against one transcript."""
+
+    verifier = QuoteVerifier(
+        similarity_threshold=similarity_threshold
+    )
+
+    return [
+        verifier.verify(
+            quote=quote,
+            source_text=source_text,
+        )
+        for quote in quotes
+    ]

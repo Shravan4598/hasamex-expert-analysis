@@ -2,33 +2,19 @@
 Transcript parsing and timestamp extraction.
 
 The parser converts raw expert-call transcripts into structured,
-timestamp-aware TranscriptSegment objects.
-
-Expected transcript format:
-
-    Expert 1 – Dr. Jean Martin
-    Role: Head of Urology
-    Market: France
-
-    00:00
-    Interviewer: Thanks for joining...
-
-    00:18
-    Dr. Martin: Adoption is growing...
-
-The parser is intentionally conservative. It does not invent missing
-timestamps, speaker names, expert metadata, or content.
+timestamp-aware transcript segments while preserving source traceability.
 """
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import re
-from pathlib import Path
-from typing import Final
+import sys
+import unicodedata
+from typing import List, Optional, Tuple
 
 from exception import SensorException
-from logger import logging
-
 from src.models import (
     SpeakerType,
     TranscriptMetadata,
@@ -38,109 +24,180 @@ from src.models import (
 logger = logging.getLogger(__name__)
 
 
-TIMESTAMP_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"(?P<hours>\d{1,2}):(?P<minutes>[0-5]\d):(?P<seconds>[0-5]\d)"
-    r"|(?P<minutes_only>[0-5]?\d):(?P<seconds_only>[0-5]\d)"
-)
-
-
-EXPERT_HEADER_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^\s*Expert\s+(?P<number>\d+)"
-    r"\s*[-–—:]\s*"
-    r"(?P<name>[^\r\n]+?)\s*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-
-ROLE_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^\s*Role\s*:\s*(?P<role>.+?)\s*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-
-MARKET_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^\s*Market\s*:\s*(?P<market>.+?)\s*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-
-SPEAKER_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^(?P<speaker>[^:]{1,100}):\s*(?P<text>.+)$"
-)
-
-
-INTERVIEWER_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^(interviewer|interviewer\s+\d+|host|moderator)$",
-    re.IGNORECASE,
-)
-
-
 class TranscriptParser:
-    """
-    Parse raw expert interview transcripts into structured segments.
+    """Parse raw expert transcripts into structured segments."""
 
-    The parser keeps the original source file attached to every segment
-    and derives timestamps only from timestamps explicitly present in
-    the source transcript.
-    """
+    # ------------------------------------------------------------------
+    # Header
+    # ------------------------------------------------------------------
+
+    EXPERT_HEADER_PATTERN = re.compile(
+        r"""
+        ^\s*
+        Expert\s+
+        (?P<number>\d+)
+        \s*
+        [-–—:]
+        \s*
+        (?P<details>.+?)
+        \s*$
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    )
+
+    EXPERT_NAME_PATTERN = re.compile(
+        r"^\s*(?:Expert\s*Name|Name)\s*:\s*(?P<value>.+?)\s*$",
+        re.IGNORECASE,
+    )
+
+    ROLE_PATTERN = re.compile(
+        r"^\s*(?:Role|Expert\s*Role|Title)\s*:\s*(?P<value>.+?)\s*$",
+        re.IGNORECASE,
+    )
+
+    MARKET_PATTERN = re.compile(
+        r"^\s*(?:Market|Country|Region)\s*:\s*(?P<value>.+?)\s*$",
+        re.IGNORECASE,
+    )
+
+    # ------------------------------------------------------------------
+    # Timestamp
+    # ------------------------------------------------------------------
+
+    HH_MM_SS_PATTERN = re.compile(
+        r"^\s*(?P<hours>\d{1,3}):"
+        r"(?P<minutes>\d{2}):"
+        r"(?P<seconds>\d{2})\s*$"
+    )
+
+    MM_SS_PATTERN = re.compile(
+        r"^\s*(?P<minutes>\d{1,3}):"
+        r"(?P<seconds>\d{2})\s*$"
+    )
+
+    # ------------------------------------------------------------------
+    # Speaker
+    # ------------------------------------------------------------------
+
+    SPEAKER_PATTERN = re.compile(
+        r"^\s*"
+        r"(?P<speaker>[A-Za-z][A-Za-z0-9 _-]{0,50})"
+        r"\s*:\s*"
+        r"(?P<text>.*)$"
+    )
 
     def parse(
         self,
         text: str,
-        source_file: str | Path,
-        document_id: str | None = None,
-    ) -> tuple[TranscriptMetadata, list[TranscriptSegment]]:
+        source_file: str,
+    ) -> Tuple[TranscriptMetadata, List[TranscriptSegment]]:
         """
         Parse a complete transcript.
 
-        Args:
-            text:
-                Raw transcript text.
-
-            source_file:
-                Original transcript filename or path.
-
-            document_id:
-                Optional stable document identifier.
-
-        Returns:
-            A tuple containing transcript metadata and parsed segments.
-
-        Raises:
-            SensorException:
-                If parsing fails or no timestamped content can be
-                extracted.
+        Returns
+        -------
+        tuple
+            Transcript metadata and chronologically ordered segments.
         """
+
         try:
-            if not text or not text.strip():
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("Transcript text cannot be empty.")
+
+            normalized_text = self._normalize_text(text)
+            lines = normalized_text.splitlines()
+
+            _, header_match = self._find_expert_header(lines)
+
+            if header_match is None:
                 raise ValueError(
-                    "Transcript content cannot be empty."
+                    f"Could not find expert header in '{source_file}'."
                 )
 
-            source_path = Path(source_file)
-            source_name = source_path.name
+            # ----------------------------------------------------------
+            # Expert metadata
+            # ----------------------------------------------------------
 
-            metadata = self._extract_metadata(
-                text=text,
-                source_file=source_name,
-                document_id=document_id,
+            expert_name, expert_role, market = (
+                self._extract_header_metadata(header_match)
             )
 
+            explicit_name, explicit_role, explicit_market = (
+                self._extract_explicit_metadata(lines)
+            )
+
+            expert_name = explicit_name or expert_name
+            expert_role = explicit_role or expert_role
+            market = explicit_market or market
+
+            if not expert_name:
+                raise ValueError(
+                    f"Could not determine expert name in '{source_file}'."
+                )
+
+            if not market:
+                raise ValueError(
+                    f"Could not determine market in '{source_file}'."
+                )
+
+            # ----------------------------------------------------------
+            # Document identity
+            # ----------------------------------------------------------
+
+            document_id = self._build_document_id(
+                source_file=source_file,
+                expert_name=expert_name,
+                market=market,
+            )
+
+            # ----------------------------------------------------------
+            # Parse timestamped segments
+            # ----------------------------------------------------------
+
             segments = self._parse_segments(
-                text=text,
-                metadata=metadata,
+                lines=lines,
+                document_id=document_id,
+                source_file=source_file,
+                expert_name=expert_name,
+                expert_role=expert_role,
+                market=market,
             )
 
             if not segments:
                 raise ValueError(
-                    f"No timestamped transcript segments found "
-                    f"in '{source_name}'."
+                    f"No timestamped transcript segments found in "
+                    f"'{source_file}'."
                 )
 
-            logger.info(
-                "Parsed transcript '%s': %d segments",
-                source_name,
-                len(segments),
+            # ----------------------------------------------------------
+            # Chronological ordering
+            # ----------------------------------------------------------
+
+            segments.sort(
+                key=lambda segment: (
+                    float(segment.start_seconds),
+                    segment.segment_id,
+                )
+            )
+
+            # ----------------------------------------------------------
+            # Infer end timestamps from next segment
+            # ----------------------------------------------------------
+
+            self._assign_segment_boundaries(segments)
+
+            duration_seconds = float(
+                segments[-1].start_seconds
+            )
+
+            metadata = TranscriptMetadata(
+                document_id=document_id,
+                source_file=source_file,
+                expert_name=expert_name,
+                expert_role=expert_role,
+                market=market,
+                duration_seconds=duration_seconds,
+                segment_count=len(segments),
             )
 
             return metadata, segments
@@ -150,534 +207,517 @@ class TranscriptParser:
 
         except Exception as error:
             logger.exception(
-                "Failed to parse transcript: %s",
+                "Failed to parse transcript '%s'.",
                 source_file,
             )
 
             raise SensorException(
                 str(error),
-                _sys_module(),
+                sys,
             ) from error
 
-    def _extract_metadata(
+    # ==================================================================
+    # Normalization
+    # ==================================================================
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        """
+        Normalize line endings and Unicode punctuation.
+
+        Transcript wording is preserved, while formatting whitespace
+        is normalized.
+        """
+
+        text = text.replace("\r\n", "\n")
+        text = text.replace("\r", "\n")
+
+        text = unicodedata.normalize("NFKC", text)
+
+        # Normalize dash variants.
+        for dash in (
+            "\u2010",
+            "\u2011",
+            "\u2012",
+            "\u2013",
+            "\u2014",
+            "\u2212",
+        ):
+            text = text.replace(dash, "-")
+
+        # Normalize non-breaking spaces.
+        text = text.replace("\u00a0", " ")
+
+        return text
+
+    @staticmethod
+    def _normalize_segment_text(text: str) -> str:
+        """Collapse repeated whitespace inside segment content."""
+
+        return re.sub(
+            r"\s+",
+            " ",
+            text,
+        ).strip()
+
+    # ==================================================================
+    # Header parsing
+    # ==================================================================
+
+    def _find_expert_header(
         self,
-        text: str,
-        source_file: str,
-        document_id: str | None,
-    ) -> TranscriptMetadata:
+        lines: List[str],
+    ) -> Tuple[int, Optional[re.Match[str]]]:
+        """Find the expert header."""
+
+        for index, raw_line in enumerate(lines):
+            line = raw_line.strip()
+
+            if not line:
+                continue
+
+            match = self.EXPERT_HEADER_PATTERN.match(line)
+
+            if match:
+                return index, match
+
+        return -1, None
+
+    @staticmethod
+    def _extract_header_metadata(
+        header_match: re.Match[str],
+    ) -> Tuple[str, str, str]:
         """
-        Extract expert metadata from the transcript header.
+        Extract metadata from compact header.
 
-        Expected format:
-
-            Expert 1 – Dr. Jean Martin
-            Role: Head of Urology
-            Market: France
-
-        The expert number is intentionally not stored because the
-        TranscriptMetadata domain model does not define an expert_number
-        field.
+        Example:
+            Expert 1 - Dr. Jean Martin, Head of Urology, France
         """
 
-        expert_match = EXPERT_HEADER_PATTERN.search(text)
+        details = header_match.group("details").strip()
 
-        if not expert_match:
-            raise ValueError(
-                f"Could not find expert header in '{source_file}'."
-            )
+        parts = [
+            part.strip()
+            for part in details.split(",")
+            if part.strip()
+        ]
 
-        expert_name = self._clean_required_text(
-            expert_match.group("name")
+        if not parts:
+            return "", "", ""
+
+        expert_name = parts[0]
+
+        if len(parts) >= 3:
+            expert_role = ", ".join(parts[1:-1])
+            market = parts[-1]
+
+        elif len(parts) == 2:
+            expert_role = ""
+            market = parts[-1]
+
+        else:
+            expert_role = ""
+            market = ""
+
+        return (
+            expert_name,
+            expert_role,
+            market,
         )
 
-        role_match = ROLE_PATTERN.search(text)
-        market_match = MARKET_PATTERN.search(text)
+    def _extract_explicit_metadata(
+        self,
+        lines: List[str],
+    ) -> Tuple[
+        Optional[str],
+        Optional[str],
+        Optional[str],
+    ]:
+        """Extract optional explicit metadata fields."""
 
-        if not role_match:
-            raise ValueError(
-                f"Could not find 'Role:' metadata in "
-                f"'{source_file}'."
-            )
+        expert_name: Optional[str] = None
+        expert_role: Optional[str] = None
+        market: Optional[str] = None
 
-        if not market_match:
-            raise ValueError(
-                f"Could not find 'Market:' metadata in "
-                f"'{source_file}'."
-            )
+        for raw_line in lines:
+            line = raw_line.strip()
 
-        expert_role = self._clean_required_text(
-            role_match.group("role")
+            if not line:
+                continue
+
+            name_match = self.EXPERT_NAME_PATTERN.match(line)
+
+            if name_match:
+                expert_name = (
+                    name_match.group("value").strip()
+                )
+                continue
+
+            role_match = self.ROLE_PATTERN.match(line)
+
+            if role_match:
+                expert_role = (
+                    role_match.group("value").strip()
+                )
+                continue
+
+            market_match = self.MARKET_PATTERN.match(line)
+
+            if market_match:
+                market = (
+                    market_match.group("value").strip()
+                )
+
+        return (
+            expert_name,
+            expert_role,
+            market,
         )
 
-        market = self._clean_required_text(
-            market_match.group("market")
-        )
-
-        return TranscriptMetadata(
-            document_id=(
-                document_id
-                or self._make_document_id(source_file)
-            ),
-            source_file=source_file,
-            expert_name=expert_name,
-            expert_role=expert_role,
-            market=market,
-        )
+    # ==================================================================
+    # Segment parsing
+    # ==================================================================
 
     def _parse_segments(
         self,
-        text: str,
-        metadata: TranscriptMetadata,
-    ) -> list[TranscriptSegment]:
+        lines: List[str],
+        document_id: str,
+        source_file: str,
+        expert_name: str,
+        expert_role: str,
+        market: str,
+    ) -> List[TranscriptSegment]:
         """
         Parse timestamped transcript blocks.
 
-        The actual transcript format has timestamps on their own lines:
-
-            00:00
-            Interviewer: Question...
-
-            00:18
-            Dr. Martin: Answer...
+        Timestamps are collected first and chronological ordering is
+        performed after the complete transcript has been parsed.
         """
 
-        lines = text.splitlines()
+        raw_segments: List[dict] = []
 
-        timestamped_lines: list[
-            tuple[int, int]
-        ] = []
+        current_timestamp: Optional[str] = None
+        current_seconds: Optional[float] = None
+        current_text_lines: List[str] = []
+        current_speaker: str = "Expert"
 
-        for line_number, line in enumerate(lines):
-            stripped_line = line.strip()
+        def flush_segment() -> None:
+            nonlocal current_timestamp
+            nonlocal current_seconds
+            nonlocal current_text_lines
+            nonlocal current_speaker
 
-            if not stripped_line:
-                continue
+            if (
+                current_timestamp is None
+                or current_seconds is None
+            ):
+                return
 
-            match = TIMESTAMP_PATTERN.fullmatch(
-                stripped_line
+            text_value = self._normalize_segment_text(
+                " ".join(current_text_lines)
             )
 
-            if not match:
-                continue
-
-            timestamp_seconds = self.parse_timestamp(
-                stripped_line
-            )
-
-            timestamped_lines.append(
-                (
-                    timestamp_seconds,
-                    line_number,
-                )
-            )
-
-        segments: list[TranscriptSegment] = []
-
-        for index, (
-            start_seconds,
-            line_number,
-        ) in enumerate(timestamped_lines):
-
-            next_start = (
-                timestamped_lines[index + 1][0]
-                if index + 1 < len(timestamped_lines)
-                else None
-            )
-
-            content = self._collect_segment_content(
-                lines=lines,
-                start_line=line_number,
-                end_line=(
-                    timestamped_lines[index + 1][1]
-                    if index + 1 < len(timestamped_lines)
-                    else len(lines)
-                ),
-            )
-
-            if not content:
+            if not text_value:
                 logger.warning(
-                    "Skipping timestamp %s in %s because "
-                    "no transcript content was found.",
-                    self.format_timestamp(start_seconds),
-                    metadata.source_file,
+                    "Skipping timestamp %s in %s because no content "
+                    "was found.",
+                    current_timestamp,
+                    source_file,
                 )
+
+                current_timestamp = None
+                current_seconds = None
+                current_text_lines = []
+                current_speaker = "Expert"
+                return
+
+            raw_segments.append(
+                {
+                    "start_timestamp": current_timestamp,
+                    "start_seconds": float(current_seconds),
+                    "speaker": current_speaker,
+                    "text": text_value,
+                }
+            )
+
+            current_timestamp = None
+            current_seconds = None
+            current_text_lines = []
+            current_speaker = "Expert"
+
+        for raw_line in lines:
+            line = raw_line.strip()
+
+            if not line:
                 continue
 
-            speaker, spoken_text = (
-                self._extract_speaker_and_text(content)
-            )
+            # ----------------------------------------------------------
+            # Metadata/header lines
+            # ----------------------------------------------------------
 
-            if not spoken_text:
-                logger.warning(
-                    "Skipping empty transcript segment at %s "
-                    "in %s.",
-                    self.format_timestamp(start_seconds),
-                    metadata.source_file,
-                )
+            if self.EXPERT_HEADER_PATTERN.match(line):
                 continue
 
-            speaker_type = self._classify_speaker(
-                speaker=speaker,
-                expert_name=metadata.expert_name,
+            if self.EXPERT_NAME_PATTERN.match(line):
+                continue
+
+            if self.ROLE_PATTERN.match(line):
+                continue
+
+            if self.MARKET_PATTERN.match(line):
+                continue
+
+            # ----------------------------------------------------------
+            # Timestamp
+            # ----------------------------------------------------------
+
+            timestamp_seconds = self._parse_timestamp(line)
+
+            if timestamp_seconds is not None:
+                flush_segment()
+
+                current_timestamp = line
+                current_seconds = float(timestamp_seconds)
+                current_text_lines = []
+                current_speaker = "Expert"
+
+                continue
+
+            # ----------------------------------------------------------
+            # Speaker line
+            # ----------------------------------------------------------
+
+            speaker_match = self.SPEAKER_PATTERN.match(line)
+
+            if speaker_match:
+                detected_speaker = (
+                    speaker_match.group("speaker").strip()
+                )
+
+                content = (
+                    speaker_match.group("text").strip()
+                )
+
+                if current_timestamp is not None:
+                    current_speaker = (
+                        detected_speaker or "Expert"
+                    )
+
+                    if content:
+                        current_text_lines.append(content)
+
+                    continue
+
+            # ----------------------------------------------------------
+            # Continuation line
+            # ----------------------------------------------------------
+
+            if current_timestamp is not None:
+                current_text_lines.append(line)
+
+        # Flush the final timestamp block.
+        flush_segment()
+
+        # --------------------------------------------------------------
+        # Create Pydantic segments.
+        #
+        # IDs are initially assigned according to chronological order.
+        # --------------------------------------------------------------
+
+        raw_segments.sort(
+            key=lambda item: float(
+                item["start_seconds"]
+            )
+        )
+
+        segments: List[TranscriptSegment] = []
+
+        for index, item in enumerate(
+            raw_segments,
+            start=1,
+        ):
+            segment_id = (
+                f"{document_id}-segment-{index:04d}"
             )
 
-            end_seconds = self._infer_end_seconds(
-                start_seconds=start_seconds,
-                next_start=next_start,
-            )
+            speaker = item["speaker"]
 
-            segment = TranscriptSegment(
-                segment_id=(
-                    f"{metadata.document_id}"
-                    f"-segment-{index + 1:04d}"
-                ),
-                document_id=metadata.document_id,
-                source_file=metadata.source_file,
-                expert_name=metadata.expert_name,
-                expert_role=metadata.expert_role,
-                market=metadata.market,
-                speaker=speaker,
-                speaker_type=speaker_type,
-                text=self._clean_required_text(
-                    spoken_text
-                ),
-                start_timestamp=self.format_timestamp(
-                    start_seconds
-                ),
-                end_timestamp=(
-                    self.format_timestamp(end_seconds)
-                    if end_seconds is not None
-                    else None
-                ),
-                start_seconds=start_seconds,
-                end_seconds=end_seconds,
-            )
+            segments.append(
+                TranscriptSegment(
+                    segment_id=segment_id,
+                    document_id=document_id,
+                    source_file=source_file,
 
-            segments.append(segment)
+                    # Segment-level identity.
+                    expert_name=expert_name,
+                    expert_role=expert_role,
+                    market=market,
+
+                    speaker=speaker,
+                    speaker_type=self._classify_speaker(
+                        speaker
+                    ),
+
+                    text=item["text"],
+
+                    start_timestamp=item[
+                        "start_timestamp"
+                    ],
+                    end_timestamp=None,
+
+                    start_seconds=float(
+                        item["start_seconds"]
+                    ),
+                    end_seconds=None,
+                )
+            )
 
         return segments
 
-    def _collect_segment_content(
-        self,
-        lines: list[str],
-        start_line: int,
-        end_line: int,
-    ) -> str:
+    # ==================================================================
+    # Segment boundaries
+    # ==================================================================
+
+    @staticmethod
+    def _assign_segment_boundaries(
+        segments: List[TranscriptSegment],
+    ) -> None:
         """
-        Collect all non-empty lines between two timestamps.
+        Set each segment's end timestamp to the next segment's start.
 
-        Example:
-
-            00:18
-            Dr. Martin: Adoption is growing...
-
-        becomes:
-
-            Dr. Martin: Adoption is growing...
+        The final segment intentionally has no invented end timestamp.
         """
 
-        content_lines: list[str] = []
-
-        for line in lines[start_line + 1:end_line]:
-            stripped = line.strip()
-
-            if not stripped:
+        for index, segment in enumerate(segments):
+            if index + 1 >= len(segments):
+                segment.end_timestamp = None
+                segment.end_seconds = None
                 continue
 
-            content_lines.append(stripped)
+            next_segment = segments[index + 1]
 
-        return " ".join(content_lines)
+            segment.end_timestamp = (
+                next_segment.start_timestamp
+            )
 
-    def _extract_speaker_and_text(
+            segment.end_seconds = float(
+                next_segment.start_seconds
+            )
+
+    # ==================================================================
+    # Timestamp parsing
+    # ==================================================================
+
+    def _parse_timestamp(
         self,
-        content: str,
-    ) -> tuple[str, str]:
-        """
-        Extract speaker name from:
+        value: str,
+    ) -> Optional[float]:
+        """Convert MM:SS or HH:MM:SS into seconds."""
 
-            Speaker: transcript text
+        value = value.strip()
 
-        If no speaker label exists, the speaker is marked unknown.
-        """
+        # HH:MM:SS
+        match = self.HH_MM_SS_PATTERN.match(value)
 
-        match = SPEAKER_PATTERN.match(
-            content.strip()
-        )
+        if match:
+            hours = int(match.group("hours"))
+            minutes = int(match.group("minutes"))
+            seconds = int(match.group("seconds"))
 
-        if not match:
-            return (
-                "Unknown",
-                content.strip(),
-            )
+            if minutes >= 60 or seconds >= 60:
+                return None
 
-        speaker = self._clean_required_text(
-            match.group("speaker")
-        )
-
-        spoken_text = self._clean_required_text(
-            match.group("text")
-        )
-
-        return speaker, spoken_text
-
-    def _classify_speaker(
-        self,
-        speaker: str,
-        expert_name: str,
-    ) -> SpeakerType:
-        """
-        Classify a speaker based on explicit transcript labels.
-
-        Interviewer labels are recognized directly.
-
-        Expert labels are matched against the expert's full name,
-        including common abbreviated forms such as:
-
-            Dr. Jean Martin
-            Dr. Martin
-            Jean Martin
-            Martin
-        """
-
-        if not speaker:
-            return SpeakerType.UNKNOWN
-
-        normalized_speaker = self._normalize_name(
-            speaker
-        )
-
-        if not normalized_speaker:
-            return SpeakerType.UNKNOWN
-
-        if INTERVIEWER_PATTERN.match(
-            speaker.strip()
-        ):
-            return SpeakerType.INTERVIEWER
-
-        normalized_expert = self._normalize_name(
-            expert_name
-        )
-
-        if not normalized_expert:
-            return SpeakerType.UNKNOWN
-
-        expert_tokens = normalized_expert.split()
-        speaker_tokens = normalized_speaker.split()
-
-        if (
-            normalized_speaker == normalized_expert
-            or normalized_speaker in normalized_expert
-            or normalized_expert in normalized_speaker
-        ):
-            return SpeakerType.EXPERT
-
-        if (
-            len(expert_tokens) >= 2
-            and expert_tokens[-1] in speaker_tokens
-        ):
-            return SpeakerType.EXPERT
-
-        return SpeakerType.UNKNOWN
-
-    def parse_timestamp(
-        self,
-        timestamp: str,
-    ) -> int:
-        """
-        Convert a timestamp into elapsed seconds.
-
-        Supported formats:
-
-            MM:SS
-            HH:MM:SS
-        """
-
-        normalized = timestamp.strip()
-
-        match = TIMESTAMP_PATTERN.fullmatch(
-            normalized
-        )
-
-        if not match:
-            raise ValueError(
-                f"Invalid timestamp format: "
-                f"'{timestamp}'"
-            )
-
-        if match.group("hours") is not None:
-            hours = int(
-                match.group("hours")
-            )
-
-            minutes = int(
-                match.group("minutes")
-            )
-
-            seconds = int(
-                match.group("seconds")
-            )
-
-            return (
+            return float(
                 hours * 3600
                 + minutes * 60
                 + seconds
             )
 
-        minutes = int(
-            match.group("minutes_only")
-        )
+        # MM:SS
+        match = self.MM_SS_PATTERN.match(value)
 
-        seconds = int(
-            match.group("seconds_only")
-        )
+        if match:
+            minutes = int(match.group("minutes"))
+            seconds = int(match.group("seconds"))
 
-        return minutes * 60 + seconds
+            if seconds >= 60:
+                return None
 
-    def format_timestamp(
-        self,
-        seconds: int | float,
-    ) -> str:
-        """
-        Convert elapsed seconds to MM:SS or HH:MM:SS.
-        """
-
-        total_seconds = max(
-            0,
-            int(round(seconds)),
-        )
-
-        hours, remainder = divmod(
-            total_seconds,
-            3600,
-        )
-
-        minutes, remaining_seconds = divmod(
-            remainder,
-            60,
-        )
-
-        if hours > 0:
-            return (
-                f"{hours:02d}:"
-                f"{minutes:02d}:"
-                f"{remaining_seconds:02d}"
+            return float(
+                minutes * 60
+                + seconds
             )
 
-        return (
-            f"{minutes:02d}:"
-            f"{remaining_seconds:02d}"
-        )
+        return None
 
-    def _infer_end_seconds(
-        self,
-        start_seconds: int,
-        next_start: int | None,
-    ) -> int | None:
-        """
-        Infer a segment end only from the next explicit timestamp.
+    # ==================================================================
+    # Speaker classification
+    # ==================================================================
 
-        The final segment intentionally has no invented end timestamp.
-        """
+    @staticmethod
+    def _classify_speaker(
+        speaker: str,
+    ) -> SpeakerType:
+        """Classify transcript speaker."""
 
-        if next_start is None:
-            return None
+        normalized = speaker.strip().lower()
 
-        if next_start <= start_seconds:
-            logger.warning(
-                "Non-increasing transcript timestamp detected: "
-                "%s -> %s",
-                start_seconds,
-                next_start,
-            )
+        if normalized == "expert":
+            return SpeakerType.EXPERT
 
-            return None
+        if normalized.startswith("expert "):
+            return SpeakerType.EXPERT
 
-        return next_start
+        if normalized == "interviewer":
+            return SpeakerType.INTERVIEWER
 
-    def _make_document_id(
-        self,
+        if normalized == "moderator":
+            return SpeakerType.MODERATOR
+
+        return SpeakerType.UNKNOWN
+
+    # ==================================================================
+    # Document ID
+    # ==================================================================
+
+    @staticmethod
+    def _build_document_id(
         source_file: str,
+        expert_name: str,
+        market: str,
     ) -> str:
-        """
-        Generate a deterministic document identifier.
-        """
+        """Create deterministic document identifier."""
 
-        stem = Path(source_file).stem
+        source_name = source_file.rsplit(
+            "/",
+            1,
+        )[-1]
 
-        normalized = re.sub(
-            r"[^a-zA-Z0-9]+",
+        source_name = source_name.rsplit(
+            "\\",
+            1,
+        )[-1]
+
+        if "." in source_name:
+            source_name = source_name.rsplit(
+                ".",
+                1,
+            )[0]
+
+        slug = re.sub(
+            r"[^a-z0-9]+",
             "-",
-            stem,
+            source_name.lower(),
         ).strip("-")
 
-        return (
-            normalized.lower()
-            or "transcript"
+        identity = (
+            f"{source_file}|"
+            f"{expert_name}|"
+            f"{market}"
         )
 
-    @staticmethod
-    def _clean_required_text(
-        value: str | None,
-    ) -> str:
-        """
-        Normalize whitespace and require non-empty text.
-        """
+        digest = hashlib.sha1(
+            identity.encode("utf-8")
+        ).hexdigest()[:8]
 
-        if value is None:
-            raise ValueError(
-                "Required transcript metadata/text is missing."
-            )
-
-        cleaned = " ".join(
-            value.split()
-        )
-
-        if not cleaned:
-            raise ValueError(
-                "Required transcript metadata/text is empty."
-            )
-
-        return cleaned
-
-    @staticmethod
-    def _normalize_name(
-        value: str,
-    ) -> str:
-        """
-        Normalize names for speaker comparison.
-        """
-
-        value = (
-            value.lower()
-            .replace("’", "'")
-        )
-
-        value = re.sub(
-            r"\bdr\.?\b",
-            "",
-            value,
-        )
-
-        value = re.sub(
-            r"[^a-zA-ZÀ-ÖØ-öø-ÿ0-9\s'-]",
-            "",
-            value,
-        )
-
-        return " ".join(
-            value.split()
-        )
-
-
-def _sys_module():
-    """Return the active sys module for SensorException."""
-
-    import sys
-
-    return sys
-
-
-__all__ = [
-    "TIMESTAMP_PATTERN",
-    "TranscriptParser",
-]
+        return f"{slug}-{digest}"
