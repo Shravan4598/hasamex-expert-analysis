@@ -8,7 +8,7 @@ Responsibilities:
     - Validate user queries.
     - Search the FAISS vector store.
     - Apply configurable result limits.
-    - Support expert/market/document filters.
+    - Support expert/market/document/source-file filters.
     - Deduplicate retrieved chunks.
     - Preserve source and timestamp metadata.
     - Provide useful diagnostics when evidence is insufficient.
@@ -28,6 +28,7 @@ from logger import logging
 from src.config import Settings, get_settings
 from src.models import RetrievalResult, TranscriptChunk
 
+from .embeddings import EmbeddingService
 from .vector_store import FAISSVectorStore
 
 logger = logging.getLogger(__name__)
@@ -49,28 +50,66 @@ class RetrievalFilters:
 
 class Retriever:
     """
-    Retrieve semantically relevant transcript chunks.
+    Application-level retrieval service.
 
-    The class deliberately keeps retrieval separate from reranking so
-    each stage can be evaluated independently.
+    The Retriever owns query validation, filtering, deduplication,
+    ranking normalization, and convenience retrieval helpers.
+
+    Semantic search itself is delegated to FAISSVectorStore.
     """
 
     def __init__(
         self,
         vector_store: FAISSVectorStore | None = None,
+        embedding_service: EmbeddingService | None = None,
         settings: Settings | None = None,
+        top_k: int | None = None,
     ) -> None:
         """
         Initialize the retriever.
 
         Args:
-            vector_store: Optional initialized FAISS vector store.
-            settings: Optional application settings.
+            vector_store:
+                Optional initialized FAISS vector store.
+
+            embedding_service:
+                Optional embedding service. This is accepted explicitly
+                so callers/tests can share the same embedding service
+                between indexing and retrieval.
+
+            settings:
+                Optional application settings.
+
+            top_k:
+                Optional default retrieval limit.
         """
         self.settings = settings or get_settings()
-        self.vector_store = vector_store or FAISSVectorStore(
-            settings=self.settings,
+
+        self.embedding_service = (
+            embedding_service
+            or (
+                vector_store.embedding_service
+                if vector_store is not None
+                else None
+            )
         )
+
+        if vector_store is not None:
+            self.vector_store = vector_store
+        else:
+            self.vector_store = FAISSVectorStore(
+                embedding_service=self.embedding_service,
+                settings=self.settings,
+            )
+
+        self.top_k = (
+            int(top_k)
+            if top_k is not None
+            else int(self.settings.retrieval_top_k)
+        )
+
+        if self.top_k <= 0:
+            raise ValueError("top_k must be greater than zero.")
 
     def retrieve(
         self,
@@ -83,49 +122,67 @@ class Retriever:
         Retrieve relevant transcript chunks.
 
         Args:
-            query: Natural-language user question.
-            top_k: Maximum number of results to return.
-            min_score: Minimum similarity score.
-            filters: Optional metadata constraints.
+            query:
+                Natural-language user question.
+
+            top_k:
+                Maximum number of results to return.
+
+            min_score:
+                Minimum similarity score.
+
+            filters:
+                Optional metadata constraints.
 
         Returns:
             Source-traceable retrieval results sorted by similarity.
 
         Raises:
-            SensorException: If retrieval fails.
+            SensorException:
+                If retrieval fails.
         """
         try:
             normalized_query = self._validate_query(query)
 
             requested_top_k = (
-                top_k
+                int(top_k)
                 if top_k is not None
-                else self.settings.retrieval_top_k
+                else self.top_k
             )
 
             if requested_top_k <= 0:
-                raise ValueError("top_k must be greater than zero.")
-
-            candidate_k = self._calculate_candidate_k(
-                requested_top_k=requested_top_k,
-                filters=filters,
-            )
+                raise ValueError(
+                    "top_k must be greater than zero."
+                )
 
             results = self.vector_store.search(
                 query=normalized_query,
-                top_k=candidate_k,
+                top_k=requested_top_k,
                 min_score=min_score,
+                market=(
+                    filters.market
+                    if filters is not None
+                    else None
+                ),
+                expert_name=(
+                    filters.expert_name
+                    if filters is not None
+                    else None
+                ),
+                document_id=(
+                    filters.document_id
+                    if filters is not None
+                    else None
+                ),
+                source_file=(
+                    filters.source_file
+                    if filters is not None
+                    else None
+                ),
             )
-
-            if filters is not None:
-                results = self._apply_filters(
-                    results=results,
-                    filters=filters,
-                )
 
             results = self._deduplicate_results(results)
             results = results[:requested_top_k]
-
             results = self._reassign_ranks(results)
 
             logger.info(
@@ -138,8 +195,11 @@ class Retriever:
 
         except SensorException:
             raise
+
         except Exception as error:
-            logger.exception("Source retrieval failed.")
+            logger.exception(
+                "Source retrieval failed."
+            )
             raise SensorException(
                 str(error),
                 _sys_module(),
@@ -154,18 +214,11 @@ class Retriever:
     ) -> list[RetrievalResult]:
         """
         Retrieve evidence specifically from one expert.
-
-        Args:
-            query: User question.
-            expert_name: Expert name to constrain retrieval.
-            top_k: Maximum number of results.
-            min_score: Minimum similarity score.
-
-        Returns:
-            Matching retrieval results.
         """
         if not expert_name or not expert_name.strip():
-            raise ValueError("expert_name cannot be empty.")
+            raise ValueError(
+                "expert_name cannot be empty."
+            )
 
         return self.retrieve(
             query=query,
@@ -185,18 +238,11 @@ class Retriever:
     ) -> list[RetrievalResult]:
         """
         Retrieve evidence specifically from one market.
-
-        Args:
-            query: User question.
-            market: Market/country to constrain retrieval.
-            top_k: Maximum number of results.
-            min_score: Minimum similarity score.
-
-        Returns:
-            Matching retrieval results.
         """
         if not market or not market.strip():
-            raise ValueError("market cannot be empty.")
+            raise ValueError(
+                "market cannot be empty."
+            )
 
         return self.retrieve(
             query=query,
@@ -216,18 +262,11 @@ class Retriever:
     ) -> list[RetrievalResult]:
         """
         Retrieve evidence from one transcript document.
-
-        Args:
-            query: User question.
-            document_id: Stable transcript document identifier.
-            top_k: Maximum number of results.
-            min_score: Minimum similarity score.
-
-        Returns:
-            Matching retrieval results.
         """
         if not document_id or not document_id.strip():
-            raise ValueError("document_id cannot be empty.")
+            raise ValueError(
+                "document_id cannot be empty."
+            )
 
         return self.retrieve(
             query=query,
@@ -238,49 +277,121 @@ class Retriever:
             ),
         )
 
+    def retrieve_for_source_file(
+        self,
+        query: str,
+        source_file: str,
+        top_k: int | None = None,
+        min_score: float | None = None,
+    ) -> list[RetrievalResult]:
+        """
+        Retrieve evidence from one source transcript file.
+        """
+        if not source_file or not source_file.strip():
+            raise ValueError(
+                "source_file cannot be empty."
+            )
+
+        return self.retrieve(
+            query=query,
+            top_k=top_k,
+            min_score=min_score,
+            filters=RetrievalFilters(
+                source_file=source_file.strip(),
+            ),
+        )
+
     def retrieve_for_all_experts(
         self,
         query: str,
-        expert_names: Iterable[str],
+        expert_names: Iterable[str] | None = None,
         top_k_per_expert: int | None = None,
         min_score: float | None = None,
-    ) -> dict[str, list[RetrievalResult]]:
+        top_k: int | None = None,
+    ) -> list[RetrievalResult]:
         """
-        Retrieve evidence independently for multiple experts.
+        Retrieve evidence across all requested experts.
 
-        This is useful for cross-expert analysis because it prevents a
-        single expert with more semantically similar text from consuming
-        all retrieval slots.
+        The public return type is a flat list because cross-expert
+        retrieval is consumed by the analysis layer and UI as a normal
+        retrieval result collection.
 
-        Args:
-            query: User question.
-            expert_names: Expert names to search independently.
-            top_k_per_expert: Maximum results for each expert.
-            min_score: Minimum similarity score.
+        When expert_names is supplied, retrieval is performed separately
+        for each expert and the results are merged deterministically.
 
-        Returns:
-            Mapping from expert name to retrieval results.
+        When expert_names is omitted, normal cross-market retrieval is
+        performed across the complete vector store.
         """
         try:
-            normalized_names = self._normalize_expert_names(expert_names)
-
-            if not normalized_names:
-                return {}
-
-            results: dict[str, list[RetrievalResult]] = {}
-
-            for expert_name in normalized_names:
-                results[expert_name] = self.retrieve_for_expert(
+            if expert_names is None:
+                return self.retrieve(
                     query=query,
-                    expert_name=expert_name,
-                    top_k=top_k_per_expert,
+                    top_k=(
+                        top_k
+                        if top_k is not None
+                        else top_k_per_expert
+                    ),
                     min_score=min_score,
                 )
 
-            return results
+            normalized_names = self._normalize_expert_names(
+                expert_names
+            )
+
+            if not normalized_names:
+                return []
+
+            per_expert_k = (
+                int(top_k_per_expert)
+                if top_k_per_expert is not None
+                else self.top_k
+            )
+
+            if per_expert_k <= 0:
+                raise ValueError(
+                    "top_k_per_expert must be greater than zero."
+                )
+
+            merged_results: list[RetrievalResult] = []
+
+            for expert_name in normalized_names:
+                expert_results = self.retrieve_for_expert(
+                    query=query,
+                    expert_name=expert_name,
+                    top_k=per_expert_k,
+                    min_score=min_score,
+                )
+                merged_results.extend(expert_results)
+
+            merged_results = self._deduplicate_results(
+                merged_results
+            )
+
+            merged_results.sort(
+                key=lambda result: result.score,
+                reverse=True,
+            )
+
+            final_top_k = (
+                int(top_k)
+                if top_k is not None
+                else None
+            )
+
+            if final_top_k is not None:
+                if final_top_k <= 0:
+                    raise ValueError(
+                        "top_k must be greater than zero."
+                    )
+                merged_results = merged_results[:final_top_k]
+
+            return self._reassign_ranks(
+                merged_results
+            )
 
         except SensorException:
             raise
+
         except Exception as error:
             logger.exception(
                 "Failed to retrieve evidence for multiple experts."
@@ -290,20 +401,35 @@ class Retriever:
                 _sys_module(),
             ) from error
 
+    def retrieve_all_experts(
+        self,
+        query: str,
+        top_k: int | None = None,
+        min_score: float | None = None,
+    ) -> list[RetrievalResult]:
+        """
+        Retrieve evidence across the complete indexed corpus.
+
+        This is a convenience alias for cross-expert retrieval.
+        """
+        return self.retrieve(
+            query=query,
+            top_k=top_k,
+            min_score=min_score,
+        )
+
     def get_source_chunks(
         self,
         results: list[RetrievalResult],
     ) -> list[TranscriptChunk]:
         """
         Extract source chunks from retrieval results.
-
-        Args:
-            results: Retrieval results.
-
-        Returns:
-            TranscriptChunk objects in retrieval order.
         """
-        return [result.chunk for result in results]
+        return [
+            result.chunk
+            for result in results
+            if result.chunk is not None
+        ]
 
     def has_sufficient_evidence(
         self,
@@ -313,17 +439,6 @@ class Retriever:
     ) -> bool:
         """
         Determine whether retrieval returned enough evidence to proceed.
-
-        This is a retrieval-level guard. The analysis layer may apply
-        stricter evidence-coverage requirements before generating an answer.
-
-        Args:
-            results: Retrieved evidence.
-            minimum_results: Minimum number of qualifying results.
-            minimum_score: Optional score threshold.
-
-        Returns:
-            True if sufficient evidence exists.
         """
         if minimum_results <= 0:
             raise ValueError(
@@ -334,9 +449,11 @@ class Retriever:
             return False
 
         threshold = (
-            minimum_score
+            float(minimum_score)
             if minimum_score is not None
-            else self.settings.min_retrieval_score
+            else float(
+                self.settings.min_retrieval_score
+            )
         )
 
         qualifying = [
@@ -346,82 +463,6 @@ class Retriever:
         ]
 
         return len(qualifying) >= minimum_results
-
-    def _calculate_candidate_k(
-        self,
-        requested_top_k: int,
-        filters: RetrievalFilters | None,
-    ) -> int:
-        """
-        Request additional FAISS candidates when metadata filtering is used.
-
-        Filtering happens after semantic search because FAISS itself does
-        not know the application-level TranscriptChunk metadata.
-        """
-        if filters is None:
-            return requested_top_k
-
-        multiplier = 4
-
-        maximum_candidates = max(
-            requested_top_k,
-            min(
-                self.vector_store.size,
-                requested_top_k * multiplier,
-            ),
-        )
-
-        return maximum_candidates
-
-    @staticmethod
-    def _apply_filters(
-        results: list[RetrievalResult],
-        filters: RetrievalFilters,
-    ) -> list[RetrievalResult]:
-        """
-        Apply exact metadata filters to retrieval candidates.
-        """
-        filtered: list[RetrievalResult] = []
-
-        for result in results:
-            chunk = result.chunk
-
-            if (
-                filters.document_id is not None
-                and chunk.document_id != filters.document_id
-            ):
-                continue
-
-            if (
-                filters.expert_name is not None
-                and not Retriever._name_matches(
-                    chunk.expert_name,
-                    filters.expert_name,
-                )
-            ):
-                continue
-
-            if (
-                filters.market is not None
-                and not Retriever._value_matches(
-                    chunk.market,
-                    filters.market,
-                )
-            ):
-                continue
-
-            if (
-                filters.source_file is not None
-                and not Retriever._value_matches(
-                    chunk.source_file,
-                    filters.source_file,
-                )
-            ):
-                continue
-
-            filtered.append(result)
-
-        return filtered
 
     @staticmethod
     def _deduplicate_results(
@@ -434,7 +475,14 @@ class Retriever:
         unique_results: list[RetrievalResult] = []
 
         for result in results:
-            chunk_id = result.chunk.chunk_id
+            chunk_id = result.chunk_id
+
+            if not chunk_id and result.chunk is not None:
+                chunk_id = result.chunk.chunk_id
+
+            if not chunk_id:
+                unique_results.append(result)
+                continue
 
             if chunk_id in seen:
                 continue
@@ -452,8 +500,16 @@ class Retriever:
         Reassign ranks after filtering and deduplication.
         """
         return [
-            result.model_copy(update={"rank": rank})
-            for rank, result in enumerate(results, start=1)
+            result.model_copy(
+                update={
+                    "rank": rank,
+                    "retrieval_rank": rank,
+                }
+            )
+            for rank, result in enumerate(
+                results,
+                start=1,
+            )
         ]
 
     @staticmethod
@@ -463,13 +519,18 @@ class Retriever:
         """
         if not isinstance(query, str):
             raise TypeError(
-                f"Query must be a string, got {type(query).__name__}."
+                "Query must be a string, "
+                f"got {type(query).__name__}."
             )
 
-        normalized = " ".join(query.split())
+        normalized = " ".join(
+            query.split()
+        )
 
         if not normalized:
-            raise ValueError("Query cannot be empty.")
+            raise ValueError(
+                "Query cannot be empty."
+            )
 
         return normalized
 
@@ -487,7 +548,9 @@ class Retriever:
             if not isinstance(name, str):
                 continue
 
-            cleaned = " ".join(name.split())
+            cleaned = " ".join(
+                name.split()
+            )
 
             if not cleaned:
                 continue
@@ -503,62 +566,6 @@ class Retriever:
         return normalized
 
     @staticmethod
-    def _name_matches(
-        actual: str | None,
-        requested: str,
-    ) -> bool:
-        """
-        Match expert names conservatively.
-
-        Exact normalized matching is preferred, with a controlled
-        substring fallback for cases such as 'Jean Martin' versus
-        'Dr. Jean Martin'.
-        """
-        if not actual:
-            return False
-
-        actual_normalized = Retriever._normalize_name(actual)
-        requested_normalized = Retriever._normalize_name(requested)
-
-        if actual_normalized == requested_normalized:
-            return True
-
-        return (
-            requested_normalized in actual_normalized
-            or actual_normalized in requested_normalized
-        )
-
-    @staticmethod
-    def _value_matches(
-        actual: str | None,
-        requested: str,
-    ) -> bool:
-        """
-        Perform case-insensitive exact matching for metadata values.
-        """
-        if actual is None:
-            return False
-
-        return (
-            " ".join(actual.split()).casefold()
-            == " ".join(requested.split()).casefold()
-        )
-
-    @staticmethod
-    def _normalize_name(value: str) -> str:
-        """
-        Normalize an expert name for comparison.
-        """
-        normalized = value.casefold()
-        normalized = normalized.replace("’", "'")
-        normalized = normalized.replace(".", " ")
-
-        if normalized.startswith("dr "):
-            normalized = normalized[3:]
-
-        return " ".join(normalized.split())
-
-    @staticmethod
     def _truncate_for_log(
         value: str,
         max_length: int = 120,
@@ -566,13 +573,16 @@ class Retriever:
         """
         Keep query logging concise.
         """
-        normalized = " ".join(value.split())
+        normalized = " ".join(
+            value.split()
+        )
 
         if len(normalized) <= max_length:
             return normalized
 
-        return f"{normalized[:max_length - 3]}..."
-
+        return (
+            f"{normalized[:max_length - 3]}..."
+        )
 
 
 def _sys_module():
