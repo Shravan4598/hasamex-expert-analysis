@@ -1,129 +1,92 @@
 """
-Main Streamlit application for Hasamex Expert Analysis.
+Hasamex Expert Analysis - Streamlit Application
 
-This module is the application entry point.
+This module provides the user-facing Streamlit application for:
+    - Expert interview analysis
+    - Theme analysis
+    - Disagreement analysis
+    - Interview guide generation
+    - Source-grounded transcript Q&A
 
-Responsibilities:
-    - Configure the Streamlit page.
-    - Initialize application services.
-    - Load the indexed transcript corpus.
-    - Provide top-level navigation.
-    - Route users to the appropriate UI workflow.
-    - Handle application-level errors safely.
-
-The application does not contain transcript-specific facts or answers.
-All analysis is delegated to the ingestion, retrieval, evidence, and
-analysis layers.
+The application layer is responsible for UI orchestration only.
+Business logic remains inside the analysis and retrieval modules.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 
 import streamlit as st
 
+from exception import SensorException
 from logger import logging
 from src.analysis.disagreements import DisagreementAnalyzer
 from src.analysis.interview_guide import InterviewGuideAnalyzer
-from src.analysis.llm import GeminiLLM
+from src.analysis.llm import GeminiLLMService
 from src.analysis.qa import TranscriptQA
 from src.analysis.themes import ThemeAnalyzer
 from src.config import Settings, get_settings
 from src.retrieval.embeddings import EmbeddingService
-from src.retrieval.reranker import Reranker
+from src.retrieval.reranker import RetrievalReranker
 from src.retrieval.retriever import Retriever
 from src.retrieval.vector_store import FAISSVectorStore
-from src.ui.dashboard import render_dashboard, render_sidebar
-from src.ui.disagreements import render_disagreements
-from src.ui.interview_guide import render_interview_guide
-from src.ui.qa import render_qa
-from src.ui.sources import render_sources
-from src.ui.themes import render_themes
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class ApplicationServices:
-    """
-    Container for application-level dependencies.
+class ApplicationInitializationError(Exception):
+    """Raised when application services cannot be initialized."""
 
-    Keeping the services together makes dependency wiring explicit and
-    prevents individual Streamlit pages from constructing their own
-    copies of the retrieval and LLM infrastructure.
-    """
+
+@dataclass
+class ApplicationServices:
+    """Container for all application-level services."""
 
     settings: Settings
     embeddings: EmbeddingService
     vector_store: FAISSVectorStore
     retriever: Retriever
-    reranker: Reranker
-    llm: GeminiLLM
+    reranker: RetrievalReranker
+    llm: GeminiLLMService
     interview_guide: InterviewGuideAnalyzer
     themes: ThemeAnalyzer
     disagreements: DisagreementAnalyzer
     qa: TranscriptQA
 
 
-class ApplicationInitializationError(RuntimeError):
+@st.cache_resource
+def initialize_services() -> ApplicationServices:
     """
-    Raised when the application cannot initialize its core services.
+    Initialize and cache all application services.
+
+    Streamlit reruns the application frequently, so expensive resources
+    such as embedding models and vector stores should be initialized only
+    once per process/session cache.
     """
-
-
-def main() -> None:
-    """
-    Run the Streamlit application.
-    """
-    settings = _load_settings()
-
-    _configure_page(settings)
-
-    _render_application_header(settings)
-
     try:
-        services = _get_application_services(settings)
-    except Exception as error:  # noqa: BLE001
-        _handle_initialization_error(error)
-        return
-
-    navigation = render_sidebar()
-
-    _render_page(
-        navigation=navigation,
-        services=services,
-    )
-
-
-@st.cache_resource(show_spinner=False)
-def _get_application_services(
-    settings: Settings,
-) -> ApplicationServices:
-    """
-    Build and cache the application's shared services.
-
-    Streamlit reruns the script frequently. Heavy services such as
-    embedding models, FAISS indexes, and LLM clients therefore need to
-    be cached at the resource level.
-    """
-    logger.info(
-        "Initializing Hasamex Expert Analysis services."
-    )
-
-    try:
+        # ------------------------------------------------------------------
+        # Settings
+        # ------------------------------------------------------------------
+        settings = get_settings()
         settings.ensure_directories()
 
+        # ------------------------------------------------------------------
+        # Embedding service
+        # ------------------------------------------------------------------
         embeddings = EmbeddingService(
-            model_name=settings.embedding_model,
+            settings=settings,
         )
 
+        # ------------------------------------------------------------------
+        # FAISS vector store
+        # ------------------------------------------------------------------
         vector_store = FAISSVectorStore(
+            embedding_service=embeddings,
+            settings=settings,
             storage_dir=settings.vector_store_path,
-            embedding_model=settings.embedding_model,
         )
 
-        if not vector_store.exists():
+        if not vector_store.exists_on_disk():
             raise ApplicationInitializationError(
                 "The vector store has not been built yet. "
                 "Run the ingestion/indexing pipeline before starting "
@@ -132,50 +95,59 @@ def _get_application_services(
 
         vector_store.load()
 
+        # ------------------------------------------------------------------
+        # Retriever
+        # ------------------------------------------------------------------
         retriever = Retriever(
             vector_store=vector_store,
             embedding_service=embeddings,
+            settings=settings,
             top_k=settings.retrieval_top_k,
-            min_score=settings.min_retrieval_score,
         )
 
-        reranker = Reranker(
-            top_k=settings.rerank_top_k,
+        # ------------------------------------------------------------------
+        # Reranker
+        # ------------------------------------------------------------------
+        reranker = RetrievalReranker(
+            settings=settings,
         )
 
-        llm = GeminiLLM(
-            api_key=settings.google_api_key,
-            model_name=settings.llm_model,
-            temperature=settings.llm_temperature,
-            max_output_tokens=settings.llm_max_output_tokens,
+        # ------------------------------------------------------------------
+        # LLM service
+        # ------------------------------------------------------------------
+        llm = GeminiLLMService(
+            settings=settings,
         )
 
+        # ------------------------------------------------------------------
+        # Analysis services
+        # ------------------------------------------------------------------
         interview_guide = InterviewGuideAnalyzer(
             retriever=retriever,
             reranker=reranker,
-            llm=llm,
-            min_evidence_coverage=settings.min_evidence_coverage,
+            llm_service=llm,
+            settings=settings,
         )
 
         themes = ThemeAnalyzer(
             retriever=retriever,
             reranker=reranker,
-            llm=llm,
-            min_evidence_coverage=settings.min_evidence_coverage,
+            llm_service=llm,
+            settings=settings,
         )
 
         disagreements = DisagreementAnalyzer(
             retriever=retriever,
             reranker=reranker,
-            llm=llm,
-            min_evidence_coverage=settings.min_evidence_coverage,
+            llm_service=llm,
+            settings=settings,
         )
 
         qa = TranscriptQA(
             retriever=retriever,
             reranker=reranker,
-            llm=llm,
-            min_evidence_coverage=settings.min_evidence_coverage,
+            llm_service=llm,
+            settings=settings,
         )
 
         logger.info(
@@ -204,162 +176,15 @@ def _get_application_services(
         )
 
         raise ApplicationInitializationError(
-            "The application services could not be initialized."
+            "Application service initialization failed: "
+            f"{type(error).__name__}: {error}"
         ) from error
 
 
-def _load_settings() -> Settings:
-    """
-    Load validated application settings.
-    """
-    try:
-        return get_settings()
-
-    except Exception as error: 
-        logger.exception(
-            "Failed to load application settings."
-        )
-
-        st.set_page_config(
-            page_title="Hasamex Expert Analysis",
-            page_icon="🔎",
-            layout="wide",
-            initial_sidebar_state="expanded",
-        )
-
-        st.error(
-            "Application configuration could not be loaded."
-        )
-
-        with st.expander("Configuration details"):
-            st.code(str(error))
-
-        st.stop()
-
-        raise
-
-
-def _configure_page(
-    settings: Settings,
-) -> None:
-    """
-    Configure the global Streamlit page.
-    """
-    st.set_page_config(
-        page_title=settings.streamlit_page_title,
-        page_icon=settings.streamlit_page_icon,
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
-
-
-def _render_application_header(
-    settings: Settings,
-) -> None:
-    """
-    Render the global application header.
-    """
-    st.markdown(
-        """
-        <style>
-        .hasamex-header {
-            padding: 0.25rem 0 0.75rem 0;
-        }
-
-        .hasamex-subtitle {
-            color: #6b7280;
-            font-size: 0.95rem;
-            margin-top: -0.5rem;
-        }
-
-        .hasamex-traceability {
-            border-left: 4px solid #4b5563;
-            padding: 0.65rem 0.9rem;
-            margin: 0.5rem 0 1rem 0;
-            background: rgba(127, 127, 127, 0.08);
-            border-radius: 0.25rem;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        f"""
-        <div class="hasamex-header">
-            <h1>🔎 {settings.app_name}</h1>
-            <div class="hasamex-subtitle">
-                Grounded expert-transcript analysis with
-                timestamped source evidence.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _render_page(
-    *,
-    navigation: str,
-    services: ApplicationServices,
-) -> None:
-    """
-    Route the selected navigation item to its UI renderer.
-    """
-    renderers: dict[str, Callable[[], None]] = {
-        "Dashboard": lambda: render_dashboard(
-            services.retriever,
-            services.vector_store,
-        ),
-        "Interview Guide": lambda: render_interview_guide(
-            services.interview_guide,
-            services.retriever,
-        ),
-        "Themes": lambda: render_themes(
-            services.themes,
-        ),
-        "Disagreements": lambda: render_disagreements(
-            services.disagreements,
-        ),
-        "Ask the Transcripts": lambda: render_qa(
-            services.qa,
-        ),
-        "Sources": lambda: render_sources(
-            services.retriever,
-        ),
-    }
-
-    renderer = renderers.get(navigation)
-
-    if renderer is None:
-        st.error(
-            f"Unknown application section: {navigation}"
-        )
-        logger.error(
-            "Unknown navigation value: %s",
-            navigation,
-        )
-        return
-
-    try:
-        renderer()
-
-    except Exception as error:  # noqa: BLE001
-        _handle_page_error(
-            navigation,
-            error,
-        )
-
-
-def _handle_initialization_error(
+def display_initialization_error(
     error: Exception,
 ) -> None:
-    """
-    Render a safe application initialization error.
-    """
-    logger.exception(
-        "Application initialization error."
-    )
+    """Display a useful initialization error in the Streamlit UI."""
 
     st.error(
         "The application could not initialize its analysis services."
@@ -367,45 +192,487 @@ def _handle_initialization_error(
 
     st.markdown(
         """
-        ### Before continuing
+        Please check the technical details below.
 
-        Make sure that:
-
-        1. The environment variables are configured.
-        2. The transcript ingestion pipeline has been executed.
-        3. The FAISS vector store has been created.
-        4. The configured embedding model is available.
-        5. The Google API key is configured for LLM-powered analysis.
+        Common causes include:
+        - Missing or invalid environment variables
+        - Missing FAISS vector-store files
+        - Embedding model loading failure
+        - Invalid API configuration
+        - Dependency/version mismatch
         """
     )
 
-    with st.expander("Technical details"):
-        st.code(str(error))
+    with st.expander(
+        "Technical details",
+        expanded=True,
+    ):
+        st.code(
+            f"Exception type: {type(error).__name__}\n\n"
+            f"Error message: {error}"
+        )
 
 
-def _handle_page_error(
-    page_name: str,
-    error: Exception,
+def render_sidebar(
+    services: ApplicationServices,
 ) -> None:
-    """
-    Handle an exception raised by a page renderer.
-    """
-    logger.exception(
-        "Error while rendering page '%s'.",
-        page_name,
+    """Render application sidebar."""
+
+    settings = services.settings
+
+    with st.sidebar:
+        st.title("Hasamex Expert Analysis")
+
+        st.markdown(
+            """
+            **Source-grounded expert transcript analysis**
+
+            Analyze expert interviews and generate answers
+            grounded in the indexed transcript evidence.
+            """
+        )
+
+        st.divider()
+
+        st.subheader("System Status")
+
+        st.success("Services initialized")
+
+        st.write(
+            f"**Embedding model:** "
+            f"`{settings.embedding_model}`"
+        )
+
+        st.write(
+            f"**LLM model:** "
+            f"`{settings.llm_model}`"
+        )
+
+        st.write(
+            f"**Retrieval Top-K:** "
+            f"`{settings.retrieval_top_k}`"
+        )
+
+        st.write(
+            f"**Reranking Top-K:** "
+            f"`{settings.rerank_top_k}`"
+        )
+
+        st.divider()
+
+        if st.button(
+            "Clear cached services",
+            use_container_width=True,
+        ):
+            st.cache_resource.clear()
+            st.rerun()
+
+
+def render_home() -> None:
+    """Render the application home page."""
+
+    st.title("Hasamex Expert Analysis")
+
+    st.markdown(
+        """
+        Welcome to the **Hasamex Expert Analysis** application.
+
+        This application provides source-grounded analysis over
+        expert interview transcripts.
+        """
     )
 
-    st.error(
-        f"The '{page_name}' section encountered an error."
+    st.divider()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("Available Analysis")
+
+        st.markdown(
+            """
+            - **Interview Guide**
+            - **Themes**
+            - **Disagreements**
+            - **Transcript Q&A**
+            """
+        )
+
+    with col2:
+        st.subheader("Grounded Evidence")
+
+        st.markdown(
+            """
+            Answers are generated from retrieved transcript
+            evidence and retain source metadata such as:
+
+            - Expert
+            - Market
+            - Source file
+            - Timestamp
+            - Retrieval score
+            """
+        )
+
+
+def render_qa_page(
+    services: ApplicationServices,
+) -> None:
+    """Render transcript Q&A interface."""
+
+    st.header("Transcript Q&A")
+
+    st.write(
+        "Ask a question about the indexed expert transcripts."
     )
 
-    st.caption(
-        "The application logged the detailed exception. "
-        "Review the application log for debugging information."
+    query = st.text_area(
+        "Your question",
+        placeholder=(
+            "Example: What are the key drivers of market adoption?"
+        ),
+        height=120,
     )
 
-    with st.expander("Technical details"):
-        st.code(str(error))
+    if st.button(
+        "Ask",
+        type="primary",
+        use_container_width=True,
+    ):
+        if not query.strip():
+            st.warning(
+                "Please enter a question."
+            )
+            return
+
+        try:
+            with st.spinner(
+                "Searching transcript evidence and generating answer..."
+            ):
+                response = services.qa.ask(
+                    question=query.strip(),
+                )
+
+            st.subheader("Answer")
+
+            # GroundedAnswer is a Pydantic model.
+            st.write(response.answer)
+
+            # --------------------------------------------------------------
+            # Confidence / grounding information
+            # --------------------------------------------------------------
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric(
+                    "Confidence",
+                    f"{response.confidence:.2f}",
+                )
+
+            with col2:
+                st.metric(
+                    "Evidence Coverage",
+                    f"{response.evidence_coverage:.2%}",
+                )
+
+            with col3:
+                st.metric(
+                    "Evidence Items",
+                    len(response.evidence),
+                )
+
+            if response.refusal_reason:
+                st.warning(
+                    f"Grounding note: {response.refusal_reason}"
+                )
+
+            # --------------------------------------------------------------
+            # Evidence
+            # --------------------------------------------------------------
+            if response.evidence:
+                st.subheader("Source Evidence")
+
+                for index, evidence in enumerate(
+                    response.evidence,
+                    start=1,
+                ):
+                    with st.expander(
+                        f"Evidence {index}: "
+                        f"{evidence.expert_name or 'Unknown Expert'}"
+                    ):
+                        st.write(
+                            f"**Expert:** "
+                            f"{evidence.expert_name or 'Unknown'}"
+                        )
+
+                        st.write(
+                            f"**Market:** "
+                            f"{evidence.market or 'Unknown'}"
+                        )
+
+                        st.write(
+                            f"**Source:** "
+                            f"{evidence.source_file}"
+                        )
+
+                        st.write(
+                            f"**Timestamp:** "
+                            f"{evidence.start_timestamp}"
+                        )
+
+                        if evidence.end_timestamp:
+                            st.write(
+                                f"**End timestamp:** "
+                                f"{evidence.end_timestamp}"
+                            )
+
+                        st.markdown("**Quote:**")
+
+                        st.info(evidence.quote)
+
+            # --------------------------------------------------------------
+            # Citations
+            # --------------------------------------------------------------
+            if response.citations:
+                st.subheader("Citations")
+
+                for citation in response.citations:
+                    st.write(citation)
+
+        except SensorException as error:
+            logger.exception(
+                "Transcript Q&A failed."
+            )
+
+            st.error(
+                f"Unable to answer the question: {error}"
+            )
+
+        except Exception as error:
+            logger.exception(
+                "Unexpected Transcript Q&A failure."
+            )
+
+            st.error(
+                f"Unexpected error: {type(error).__name__}: {error}"
+            )
+
+
+def render_theme_page(
+    services: ApplicationServices,
+) -> None:
+    """Render theme analysis interface."""
+
+    st.header("Theme Analysis")
+
+    query = st.text_input(
+        "Topic or theme",
+        placeholder=(
+            "Example: pricing, adoption, competition"
+        ),
+    )
+
+    if st.button(
+        "Analyze Theme",
+        type="primary",
+        use_container_width=True,
+    ):
+        if not query.strip():
+            st.warning(
+                "Please enter a theme."
+            )
+            return
+
+        try:
+            with st.spinner(
+                "Analyzing transcript evidence..."
+            ):
+                result = services.themes.analyze(
+                    focus=query.strip()
+                )
+
+            st.subheader("Analysis")
+
+            st.write(result)
+
+        except SensorException as error:
+            logger.exception(
+                "Theme analysis failed."
+            )
+
+            st.error(
+                f"Theme analysis failed: {error}"
+            )
+
+        except Exception as error:
+            logger.exception(
+                "Unexpected theme analysis failure."
+            )
+
+            st.error(
+                f"Unexpected error: {type(error).__name__}: {error}"
+            )
+
+
+def render_disagreement_page(
+    services: ApplicationServices,
+) -> None:
+    """Render disagreement analysis interface."""
+
+    st.header("Disagreement Analysis")
+
+    query = st.text_input(
+        "Topic to compare",
+        placeholder=(
+            "Example: Market growth expectations"
+        ),
+    )
+
+    if st.button(
+        "Analyze Disagreements",
+        type="primary",
+        use_container_width=True,
+    ):
+        if not query.strip():
+            st.warning(
+                "Please enter a topic."
+            )
+            return
+
+        try:
+            with st.spinner(
+                "Comparing expert evidence..."
+            ):
+                result = services.disagreements.analyze(
+                    focus=query.strip()
+                )
+
+            st.subheader("Analysis")
+
+            st.write(result)
+
+        except SensorException as error:
+            logger.exception(
+                "Disagreement analysis failed."
+            )
+
+            st.error(
+                f"Disagreement analysis failed: {error}"
+            )
+
+        except Exception as error:
+            logger.exception(
+                "Unexpected disagreement analysis failure."
+            )
+
+            st.error(
+                f"Unexpected error: {type(error).__name__}: {error}"
+            )
+
+
+def render_interview_guide_page(
+    services: ApplicationServices,
+) -> None:
+    """Render interview guide analysis interface."""
+
+    st.header("Interview Guide")
+
+    topic = st.text_input(
+        "Interview topic",
+        placeholder=(
+            "Example: robotic surgery adoption"
+        ),
+    )
+
+    if st.button(
+        "Generate Interview Guide",
+        type="primary",
+        use_container_width=True,
+    ):
+        if not topic.strip():
+            st.warning(
+                "Please enter an interview topic."
+            )
+            return
+
+        try:
+            with st.spinner(
+                "Analyzing transcript evidence..."
+            ):
+                result = services.interview_guide.analyze_question(
+                    topic.strip()
+                )
+
+            st.subheader("Interview Guide")
+
+            st.write(result)
+
+        except SensorException as error:
+            logger.exception(
+                "Interview guide generation failed."
+            )
+
+            st.error(
+                f"Interview guide generation failed: {error}"
+            )
+
+        except Exception as error:
+            logger.exception(
+                "Unexpected interview guide failure."
+            )
+
+            st.error(
+                f"Unexpected error: {type(error).__name__}: {error}"
+            )
+
+
+def main() -> None:
+    """Run the Streamlit application."""
+
+    settings = get_settings()
+
+    st.set_page_config(
+        page_title=settings.streamlit_page_title,
+        page_icon=settings.streamlit_page_icon,
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    try:
+        services = initialize_services()
+
+    except Exception as error:  # noqa: BLE001
+        display_initialization_error(error)
+        st.stop()
+        return
+
+    render_sidebar(services)
+
+    page = st.sidebar.radio(
+        "Navigation",
+        [
+            "Home",
+            "Transcript Q&A",
+            "Theme Analysis",
+            "Disagreement Analysis",
+            "Interview Guide",
+        ],
+    )
+
+    if page == "Home":
+        render_home()
+
+    elif page == "Transcript Q&A":
+        render_qa_page(services)
+
+    elif page == "Theme Analysis":
+        render_theme_page(services)
+
+    elif page == "Disagreement Analysis":
+        render_disagreement_page(services)
+
+    elif page == "Interview Guide":
+        render_interview_guide_page(services)
 
 
 if __name__ == "__main__":

@@ -24,7 +24,6 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from enum import Enum
-from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +50,21 @@ class QuoteVerificationResult:
     """
     Result returned by quote verification.
 
-    `status` is an Enum rather than a plain string so callers can safely
-    use both:
+    Attributes:
+        verified:
+            Whether the quote passed verification.
 
-        result.status == QuoteVerificationStatus.VERIFIED
+        similarity:
+            Deterministic similarity score between 0.0 and 1.0.
 
-    and:
+        confidence:
+            Confidence score between 0.0 and 1.0.
 
-        result.status.value == "verified"
+        matched_text:
+            Original source text that matched the quote, when available.
+
+        reason:
+            Human-readable explanation of the verification result.
     """
 
     verified: bool
@@ -89,7 +95,9 @@ class QuoteVerificationResult:
 
 
 def _unicode_normalize(text: str) -> str:
-    """Normalize Unicode and common typographic characters."""
+    """
+    Normalize Unicode and common typographic characters.
+    """
 
     text = unicodedata.normalize("NFKC", text)
 
@@ -118,12 +126,12 @@ def normalize_quote(text: str) -> str:
     """
     Normalize text for deterministic quote comparison.
 
-    The operation:
-    - Unicode-normalizes the input
-    - converts to lowercase
-    - removes ASCII punctuation
-    - removes Unicode punctuation
-    - collapses whitespace
+    Operations:
+    - Unicode normalization
+    - lowercase conversion
+    - ASCII punctuation removal
+    - Unicode punctuation removal
+    - whitespace collapsing
 
     Semantic paraphrasing is intentionally NOT performed.
     """
@@ -132,8 +140,11 @@ def normalize_quote(text: str) -> str:
         return ""
 
     normalized = _unicode_normalize(str(text))
+
+    # Case-insensitive comparison.
     normalized = normalized.lower()
 
+    # Remove ASCII punctuation.
     normalized = normalized.translate(
         str.maketrans(
             "",
@@ -142,12 +153,14 @@ def normalize_quote(text: str) -> str:
         )
     )
 
+    # Remove Unicode punctuation.
     normalized = "".join(
         character
         for character in normalized
         if not unicodedata.category(character).startswith("P")
     )
 
+    # Normalize whitespace.
     normalized = re.sub(
         r"\s+",
         " ",
@@ -193,7 +206,9 @@ def _find_normalized_substring(
     """
     Find a candidate inside source after deterministic normalization.
 
-    Returns the original source substring when found.
+    Returns:
+        The original source substring when found.
+        None otherwise.
     """
 
     normalized_source, positions = (
@@ -240,8 +255,9 @@ def _best_similarity(
 
     Exact normalized containment receives 1.0.
 
-    For non-exact candidates, SequenceMatcher is used against the full
-    source and deterministic local windows.
+    For non-exact candidates, SequenceMatcher is used against:
+    - the full source
+    - deterministic local windows around the candidate length
     """
 
     candidate_normalized = normalize_quote(candidate)
@@ -253,11 +269,13 @@ def _best_similarity(
     if not source_normalized:
         return 0.0
 
+    # Exact normalized containment.
     if candidate_normalized in source_normalized:
         return 1.0
 
     candidate_length = len(candidate_normalized)
 
+    # Compare against the complete source.
     best = SequenceMatcher(
         None,
         candidate_normalized,
@@ -265,6 +283,7 @@ def _best_similarity(
         autojunk=False,
     ).ratio()
 
+    # Compare against local windows.
     window_sizes = {
         candidate_length,
         max(
@@ -278,6 +297,7 @@ def _best_similarity(
     }
 
     for window_size in sorted(window_sizes):
+
         if window_size >= len(source_normalized):
             continue
 
@@ -302,7 +322,10 @@ def _best_similarity(
                 autojunk=False,
             ).ratio()
 
-            best = max(best, ratio)
+            best = max(
+                best,
+                ratio,
+            )
 
     return max(
         0.0,
@@ -319,7 +342,9 @@ def _best_similarity(
 
 
 class QuoteVerifier:
-    """Deterministic transcript quote verifier."""
+    """
+    Deterministic transcript quote verifier.
+    """
 
     DEFAULT_SIMILARITY_THRESHOLD = 0.80
 
@@ -344,7 +369,13 @@ class QuoteVerifier:
         quote: str,
         source_text: str,
     ) -> QuoteVerificationResult:
-        """Verify a candidate quote against source transcript text."""
+        """
+        Verify a candidate quote against source transcript text.
+        """
+
+        # --------------------------------------------------------------
+        # Input validation
+        # --------------------------------------------------------------
 
         if quote is None:
             return QuoteVerificationResult(
@@ -444,7 +475,9 @@ class QuoteVerifier:
         quote: str,
         source_text: str,
     ) -> QuoteVerificationResult:
-        """Backward-compatible verification alias."""
+        """
+        Backward-compatible verification alias.
+        """
 
         return self.verify(
             quote=quote,
@@ -464,7 +497,9 @@ def verify_quote(
         QuoteVerifier.DEFAULT_SIMILARITY_THRESHOLD
     ),
 ) -> QuoteVerificationResult:
-    """Verify one quote against one transcript source."""
+    """
+    Verify one quote against one transcript source.
+    """
 
     verifier = QuoteVerifier(
         similarity_threshold=similarity_threshold
@@ -483,7 +518,11 @@ def verify_quote_against_sources(
         QuoteVerifier.DEFAULT_SIMILARITY_THRESHOLD
     ),
 ) -> QuoteVerificationResult:
-    """Verify a quote against multiple transcript sources."""
+    """
+    Verify a quote against multiple transcript sources.
+
+    The result with the highest similarity score is returned.
+    """
 
     if not sources:
         return QuoteVerificationResult(
@@ -501,6 +540,7 @@ def verify_quote_against_sources(
     best_result: QuoteVerificationResult | None = None
 
     for source in sources:
+
         result = verifier.verify(
             quote=quote,
             source_text=source,
@@ -525,7 +565,9 @@ def verify_quotes(
         QuoteVerifier.DEFAULT_SIMILARITY_THRESHOLD
     ),
 ) -> list[QuoteVerificationResult]:
-    """Verify multiple quotes against one transcript."""
+    """
+    Verify multiple quotes against one transcript.
+    """
 
     verifier = QuoteVerifier(
         similarity_threshold=similarity_threshold

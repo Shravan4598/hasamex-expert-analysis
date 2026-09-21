@@ -684,7 +684,7 @@ def test_empty_query_fails_safely(
     """An empty query should not silently retrieve arbitrary evidence."""
     try:
         results = retriever.retrieve("")
-    except Exception:
+    except Exception: # noqa: BLE001
         return
 
     assert results == []
@@ -696,7 +696,7 @@ def test_whitespace_only_query_fails_safely(
     """Whitespace-only queries should not retrieve arbitrary evidence."""
     try:
         results = retriever.retrieve("   ")
-    except Exception:
+    except Exception: # noqa: BLE001
         return
 
     assert results == []

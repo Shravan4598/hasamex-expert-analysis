@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import pytest
 
+from exception import SensorException
 from src.ingestion.parser import TranscriptParser
 from src.models import SpeakerType
 
@@ -301,7 +302,7 @@ def test_parser_rejects_empty_transcript(
     parser: TranscriptParser,
 ) -> None:
     """An empty transcript should not silently produce a valid corpus."""
-    with pytest.raises(Exception):
+    with pytest.raises(SensorException):
         parser.parse(
             "",
             source_file="empty.txt",
@@ -313,7 +314,7 @@ def test_parser_requires_source_file(
     france_transcript: str,
 ) -> None:
     """A source filename is required for traceable evidence."""
-    with pytest.raises(Exception):
+    with pytest.raises(SensorException):
         parser.parse(
             france_transcript,
             source_file="",

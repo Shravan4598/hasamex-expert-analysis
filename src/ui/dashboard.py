@@ -317,11 +317,8 @@ def _configure_page() -> None:
             layout="wide",
             initial_sidebar_state="expanded",
         )
-    except Exception as error:
-        logger.debug(
-            "Streamlit page configuration was already initialized: %s",
-            error,
-        )
+    except RuntimeError:
+        logger.debug("Streamlit page configuration was already initialized")
 
 
 def _render_header() -> None:
@@ -406,29 +403,37 @@ def _render_overview(
         (
             analysis_columns[0],
             "📋 Interview Guide",
+            (
             "Answer the predefined interview questions for the "
-            "available experts.",
+            "available experts."
+            ),
             "Interview Guide",
         ),
         (
             analysis_columns[1],
             "🧩 Common Themes",
+            (
             "Identify recurring topics and supporting evidence "
-            "across experts.",
+            "across experts."
+        ),
             "Themes",
         ),
         (
             analysis_columns[2],
             "⚖️ Differences",
+            (
             "Surface disagreements, different emphasis, and "
-            "different market experiences.",
+            "different market experiences."
+            ),
             "Disagreements",
         ),
         (
             analysis_columns[3],
             "💬 Ask Questions",
+            (
             "Ask natural-language questions across the transcript "
-            "corpus.",
+            "corpus."
+            ),
             "Ask Questions",
         ),
     )

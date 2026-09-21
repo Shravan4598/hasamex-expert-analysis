@@ -541,7 +541,7 @@ EVIDENCE:
                     update={
                         "status": verification.status,
                         "verification_message": (
-                            verification.message
+                            verification.reason
                         ),
                     }
                 )

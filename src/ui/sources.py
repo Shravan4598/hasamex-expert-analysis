@@ -24,7 +24,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable
-from typing import Any
 
 import streamlit as st
 
@@ -32,7 +31,6 @@ from logger import logging
 from src.models import (
     TranscriptChunk,
     TranscriptMetadata,
-    TranscriptSegment,
 )
 from src.retrieval.retriever import Retriever
 

@@ -50,6 +50,7 @@ from src.config import Settings, get_settings
 from src.evidence.citation import CitationBuilder
 from src.evidence.quote_verifier import QuoteVerifier
 from src.models import (
+    EvidenceStatus,
     GroundedAnswer,
     SearchQuery,
 )
@@ -434,9 +435,8 @@ class TranscriptQA:
                 item.model_copy(
                     update={
                         "status": verification.status,
-                        "verification_message": (
-                            verification.message
-                        ),
+                        "verification_message":
+                            verification.reason,
                     }
                 )
             )
@@ -510,6 +510,7 @@ class TranscriptQA:
                 "citations": citations,
                 "evidence_coverage": coverage,
                 "evidence_sufficient": True,
+                "evidence_status": EvidenceStatus.VERIFIED,
             }
         )
 

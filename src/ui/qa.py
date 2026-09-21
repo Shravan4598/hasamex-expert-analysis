@@ -19,8 +19,6 @@ All answer evidence comes from the analysis layer.
 
 from __future__ import annotations
 
-from typing import Any
-
 import streamlit as st
 
 from logger import logging
@@ -404,32 +402,44 @@ def _render_example_questions() -> None:
         examples = [
             (
                 "Adoption",
+                (
                 "How would the experts describe current adoption "
                 "of robotic surgery?"
+                ),
             ),
             (
                 "Barriers",
+                (
                 "What are the main barriers to adoption?"
+                ),
             ),
             (
                 "Economics",
+                (
                 "How important are hospital budgets and ROI "
                 "in purchasing decisions?"
+                ),
             ),
             (
                 "Training",
+                (
                 "What do the experts say about surgeon training "
                 "and clinical outcomes?"
+                ),
             ),
             (
                 "Outlook",
+                (
                 "What adoption trend do the experts expect "
                 "over the next 3–5 years?"
+                ),
             ),
             (
                 "Timeline",
+                (
                 "What purchasing timeline do the experts describe "
                 "for a new robotic system?"
+                ),
             ),
         ]
 

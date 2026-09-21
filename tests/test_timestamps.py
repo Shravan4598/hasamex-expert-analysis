@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import pytest
 
+from exception import SensorException
 from src.ingestion.parser import TranscriptParser
 
 
@@ -328,7 +329,7 @@ not-a-timestamp
 Expert: This line does not contain a valid timestamp.
 """
 
-    with pytest.raises(Exception):
+    with pytest.raises(SensorException):
         parser.parse(
             transcript,
             source_file="Transcript_1_France.txt",

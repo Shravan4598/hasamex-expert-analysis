@@ -20,7 +20,7 @@ equivalent to cosine similarity.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -945,13 +945,9 @@ class FAISSVectorStore:
         ):
             return False
 
-        if (
-            source_file is not None
-            and chunk.source_file != source_file
-        ):
-            return False
-
-        return True
+        return not (
+                source_file is not None
+                and chunk.source_file != source_file)
 
     @staticmethod
     def _to_retrieval_result(
@@ -1036,7 +1032,7 @@ class FAISSVectorStore:
             metadata,
             dict,
         ):
-            raise ValueError(
+            raise TypeError(
                 "Vector metadata must be a JSON object."
             )
 

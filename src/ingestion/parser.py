@@ -12,7 +12,6 @@ import logging
 import re
 import sys
 import unicodedata
-from typing import List, Optional, Tuple
 
 from exception import SensorException
 from src.models import (

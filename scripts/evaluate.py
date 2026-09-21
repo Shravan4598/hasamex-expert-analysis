@@ -58,7 +58,7 @@ from src.models import (
     GroundedAnswer,
 )
 from src.retrieval.embeddings import EmbeddingService
-from src.retrieval.reranker import Reranker
+from src.retrieval.reranker import RetrievalReranker
 from src.retrieval.retriever import Retriever
 from src.retrieval.vector_store import FAISSVectorStore
 
@@ -249,8 +249,8 @@ def _build_services(
         min_score=settings.min_retrieval_score,
     )
 
-    reranker = Reranker(
-        top_k=settings.rerank_top_k,
+    reranker = RetrievalReranker(
+        settings=settings,
     )
 
     llm = GeminiLLM(

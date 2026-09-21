@@ -38,7 +38,7 @@ from src.analysis.qa import TranscriptQA
 from src.config import get_settings
 from src.models import EvaluationCase, EvaluationResult, GroundedAnswer
 from src.retrieval.embeddings import EmbeddingService
-from src.retrieval.reranker import Reranker
+from src.retrieval.reranker import RetrievalReranker
 from src.retrieval.retriever import Retriever
 from src.retrieval.vector_store import FAISSVectorStore
 
@@ -770,8 +770,8 @@ def build_evaluation_runner() -> EvaluationRunner:
         top_k=settings.retrieval_top_k,
     )
 
-    reranker = Reranker(
-        top_k=settings.rerank_top_k,
+    reranker = RetrievalReranker(
+        settings=settings,
     )
 
     qa_engine = TranscriptQA(

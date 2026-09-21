@@ -19,15 +19,10 @@ Key principles:
 
 from __future__ import annotations
 
-from typing import Any
-
 import streamlit as st
 
 from logger import logging
-from src.analysis.interview_guide import (
-    INTERVIEW_QUESTIONS,
-    InterviewGuideAnalyzer,
-)
+from src.analysis.interview_guide import InterviewGuideAnalyzer
 from src.models import (
     Evidence,
     GroundedAnswer,
@@ -536,10 +531,8 @@ def _discover_experts(
             key=str.casefold,
         )
 
-    except Exception as error:
-        logger.exception(
-            "Failed to discover experts."
-        )
+    except (ValueError, RuntimeError):
+        logger.exception("Failed to discover experts.")
 
         st.warning(
             "Expert discovery is currently unavailable."

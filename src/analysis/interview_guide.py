@@ -468,7 +468,7 @@ class InterviewGuideAnalyzer:
                 item.model_copy(
                     update={
                         "status": result.status,
-                        "verification_message": result.message,
+                        "verification_message": result.reason,
                     }
                 )
             )

@@ -29,7 +29,6 @@ Important principles:
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any
 
 import streamlit as st
 
@@ -691,7 +690,6 @@ def _safe_error_message(
 __all__ = [
     "render_disagreement",
     "render_disagreement_summary",
-    "render_disagreement_type_guide",
     "render_disagreements",
     "render_disagreements_list",
 ]
