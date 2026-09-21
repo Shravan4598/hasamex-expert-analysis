@@ -284,7 +284,7 @@ class GeminiLLMService:
             )
 
             if not isinstance(parsed, dict):
-                raise ValueError(
+                raise TypeError(
                     "Gemini JSON response must be an object."
                 )
 
@@ -778,7 +778,7 @@ TRANSCRIPT EVIDENCE:
             ) from error
 
         if not isinstance(parsed, dict):
-            raise ValueError(
+            raise TypeError(
                 "Gemini JSON response must be an object."
             )
 
