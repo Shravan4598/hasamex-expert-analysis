@@ -184,10 +184,15 @@ class Retriever:
         """
         Retrieve evidence specifically from one market.
 
-        Market matching is case-insensitive and whitespace-normalized.
-        The vector store performs the primary metadata filtering, while
-        this helper performs a final defensive filter so that the public
-        contract is always respected.
+        The market helper intentionally searches the complete semantic
+        candidate space for the requested market before applying the
+        application's optional score threshold.
+
+        This prevents a valid market-specific source from disappearing
+        merely because a short query such as "adoption" has a lower
+        embedding similarity to that market's wording.
+
+        An explicitly supplied min_score is still respected.
         """
         if not market or not market.strip():
             raise ValueError(
@@ -198,10 +203,30 @@ class Retriever:
             market.split()
         ).casefold()
 
+        requested_top_k = (
+            int(top_k)
+            if top_k is not None
+            else self.top_k
+        )
+
+        if requested_top_k <= 0:
+            raise ValueError(
+                "top_k must be greater than zero."
+            )
+
+        # If the caller explicitly supplies a score threshold, preserve
+        # that contract. Otherwise use zero for this helper so that the
+        # market filter is not defeated by the global retrieval threshold.
+        effective_min_score = (
+            float(min_score)
+            if min_score is not None
+            else 0.0
+        )
+
         results = self.retrieve(
             query=query,
-            top_k=top_k,
-            min_score=min_score,
+            top_k=requested_top_k,
+            min_score=effective_min_score,
             filters=RetrievalFilters(
                 market=market.strip(),
             ),
@@ -335,6 +360,7 @@ class Retriever:
                     raise ValueError(
                         "top_k must be greater than zero."
                     )
+
                 merged_results = merged_results[:top_k]
 
             return self._reassign_ranks(
