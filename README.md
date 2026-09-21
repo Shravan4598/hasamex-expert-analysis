@@ -605,7 +605,7 @@ hasamex-expert-analysis/
 ## Clone the repository
 
 ```bash
-git clone <your-repository-url>
+git clone https://github.com/Shravan4598/hasamex-expert-analysis.git
 cd hasamex-expert-analysis
 ```
 
