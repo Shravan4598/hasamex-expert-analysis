@@ -94,25 +94,6 @@ class InterviewAnalysisConfig:
 class InterviewGuideAnalyzer:
     """
     Analyze the fixed interview guide against transcript evidence.
-
-    The analyzer follows this pipeline:
-
-        Question
-            ↓
-        Retrieval
-            ↓
-        Reranking
-            ↓
-        Evidence conversion
-            ↓
-        Quote verification
-            ↓
-        Grounded LLM synthesis
-            ↓
-        Citation construction
-
-    The LLM is never given responsibility for source discovery or
-    timestamp generation.
     """
 
     def __init__(
@@ -171,32 +152,53 @@ class InterviewGuideAnalyzer:
             f"Unknown interview question ID: {question_id}"
         )
 
+    def _resolve_question(
+        self,
+        question: InterviewQuestion | str,
+    ) -> InterviewQuestion:
+        """Robustly resolve question whether passed as object, ID, or text."""
+        if isinstance(question, InterviewQuestion):
+            return question
+        
+        q_str = str(question).strip()
+        # Try matching by ID first
+        try:
+            return self.get_question(q_str)
+        except ValueError:
+            pass
+
+        # Try matching by text
+        for q in INTERVIEW_QUESTIONS:
+            if q.question.lower() == q_str.lower():
+                return q
+
+        # Fallback default if not found
+        return InterviewQuestion(
+            question_id="CUSTOM",
+            question=q_str,
+            topic="Custom query",
+        )
+
     def analyze_question(
         self,
-        question: InterviewQuestion,
+        question: InterviewQuestion | str,
         *,
         filters: RetrievalFilters | None = None,
     ) -> GroundedAnswer:
         """
-        Analyze one interview question.
-
-        Args:
-            question: Interview-guide question.
-            filters: Optional source filters. These are useful for
-                expert-specific analysis.
-
-        Returns:
-            GroundedAnswer containing answer, evidence, and citations.
+        Analyze one interview question. Accepts either an InterviewQuestion object or a string.
         """
+        resolved_question = self._resolve_question(question)
+
         try:
             retrieval_results = self.retriever.retrieve(
-                query=question.question,
+                query=resolved_question.question,
                 filters=filters,
                 top_k=self.config.retrieval_top_k,
             )
 
             reranked_results = self.reranker.rerank(
-                query=question.question,
+                query=resolved_question.question,
                 results=retrieval_results,
                 top_k=self.config.rerank_top_k,
             )
@@ -207,7 +209,8 @@ class InterviewGuideAnalyzer:
 
             if len(evidence) < self.config.minimum_evidence:
                 return GroundedAnswer(
-                    question=question.question,
+                    question=resolved_question.question,
+                    question_id=resolved_question.question_id,
                     expert_name=(
                         filters.expert_name
                         if filters
@@ -227,7 +230,7 @@ class InterviewGuideAnalyzer:
                     confidence=0.0,
                     evidence_coverage=0.0,
                     evidence_sufficient=False,
-                    refusal_reason=(
+                    reasoning=(
                         "No sufficiently relevant transcript evidence "
                         "was retrieved."
                     ),
@@ -235,7 +238,7 @@ class InterviewGuideAnalyzer:
 
             grounded_answer = (
                 self.llm_service.generate_grounded_answer(
-                    question=question.question,
+                    question=resolved_question.question,
                     evidence=evidence,
                     expert_name=(
                         filters.expert_name
@@ -258,18 +261,24 @@ class InterviewGuideAnalyzer:
                 verified_evidence
             )
 
-            return self._finalize_answer(
+            # Ensure question_id is populated on the grounded answer
+            final_answer = self._finalize_answer(
                 grounded_answer=grounded_answer,
                 evidence=verified_evidence,
                 citations=citations,
             )
+            
+            if not final_answer.question_id:
+                final_answer.question_id = resolved_question.question_id
+
+            return final_answer
 
         except SensorException:
             raise
         except Exception as error:
             logger.exception(
                 "Interview question analysis failed: %s",
-                question.question_id,
+                resolved_question.question_id,
             )
             raise SensorException(
                 str(error),
@@ -278,7 +287,7 @@ class InterviewGuideAnalyzer:
 
     def analyze_question_by_expert(
         self,
-        question: InterviewQuestion,
+        question: InterviewQuestion | str,
         expert_name: str,
     ) -> GroundedAnswer:
         """Analyze one interview question for one expert."""
@@ -293,7 +302,7 @@ class InterviewGuideAnalyzer:
 
     def analyze_question_by_market(
         self,
-        question: InterviewQuestion,
+        question: InterviewQuestion | str,
         market: str,
     ) -> GroundedAnswer:
         """Analyze one interview question for one market."""
@@ -350,12 +359,7 @@ class InterviewGuideAnalyzer:
         self,
         expert_names: Iterable[str],
     ) -> dict[str, list[GroundedAnswer]]:
-        """
-        Run the complete interview guide independently for each expert.
-
-        Returns:
-            Mapping from expert name to six grounded answers.
-        """
+        """Run the complete interview guide independently for each expert."""
         results: dict[str, list[GroundedAnswer]] = {}
 
         for expert_name in expert_names:
@@ -376,18 +380,12 @@ class InterviewGuideAnalyzer:
         self,
         results: list[RetrievalResult],
     ) -> list[Evidence]:
-        """
-        Convert retrieval results into source-grounded Evidence objects.
-
-        Evidence metadata comes from retrieved transcript chunks, not
-        from the LLM.
-        """
         evidence: list[Evidence] = []
 
         for result in results:
             chunk = result.chunk
 
-            if not chunk.text.strip():
+            if not chunk or not chunk.text.strip():
                 continue
 
             evidence.append(
@@ -400,11 +398,9 @@ class InterviewGuideAnalyzer:
                     source_file=chunk.source_file,
                     expert_name=chunk.expert_name,
                     market=chunk.market,
-                    speaker=chunk.speaker,
+                    quote=chunk.text,
                     start_timestamp=chunk.start_timestamp,
                     end_timestamp=chunk.end_timestamp,
-                    quote=chunk.text,
-                    source_text=chunk.text,
                 )
             )
 
@@ -414,12 +410,6 @@ class InterviewGuideAnalyzer:
         self,
         evidence: list[Evidence],
     ) -> list[Evidence]:
-        """
-        Select evidence while removing obvious duplicates.
-
-        Retrieval scores are already incorporated into ranking before
-        this stage. This method focuses on source quality and diversity.
-        """
         if not evidence:
             return []
 
@@ -442,19 +432,12 @@ class InterviewGuideAnalyzer:
         self,
         evidence: list[Evidence],
     ) -> list[Evidence]:
-        """
-        Verify each evidence item before allowing it into the final answer.
-
-        Retrieved chunks originate from the transcript, so their text is
-        already source-derived. The verifier is still applied here to
-        enforce the same evidence contract used by generated quotes.
-        """
         verified: list[Evidence] = []
 
         for item in evidence:
             result = self.quote_verifier.verify(
                 quote=item.quote,
-                source_text=item.source_text,
+                source_text=getattr(item, "source_text", item.quote),
             )
 
             if not result.verified:
@@ -468,7 +451,6 @@ class InterviewGuideAnalyzer:
                 item.model_copy(
                     update={
                         "status": result.status,
-                        "verification_message": result.reason,
                     }
                 )
             )
@@ -481,79 +463,25 @@ class InterviewGuideAnalyzer:
         evidence: list[Evidence],
         citations: list[Citation],
     ) -> GroundedAnswer:
-        """Apply application-level evidence safeguards to an LLM answer."""
         if not evidence:
             return grounded_answer.model_copy(
                 update={
                     "evidence": [],
                     "citations": [],
                     "confidence": 0.0,
-                    "evidence_coverage": 0.0,
-                    "evidence_sufficient": False,
-                    "refusal_reason": (
+                    "reasoning": (
                         "The generated answer could not be supported "
                         "by verified transcript evidence."
                     ),
                 }
             )
 
-        evidence_coverage = self._calculate_evidence_coverage(
-            evidence
-        )
-
-        evidence_sufficient = (
-            grounded_answer.evidence_sufficient
-            and evidence_coverage
-            >= self.config.minimum_coverage
-        )
-
-        confidence = (
-            grounded_answer.confidence
-            if evidence_sufficient
-            else 0.0
-        )
-
-        refusal_reason = (
-            grounded_answer.refusal_reason
-            if not evidence_sufficient
-            else None
-        )
-
-        if not evidence_sufficient:
-            answer = (
-                "The available transcript evidence is not sufficient "
-                "to provide a reliably grounded answer."
-            )
-        else:
-            answer = grounded_answer.answer
-
         return grounded_answer.model_copy(
             update={
-                "answer": answer,
                 "evidence": evidence,
                 "citations": citations,
-                "confidence": confidence,
-                "evidence_coverage": evidence_coverage,
-                "evidence_sufficient": evidence_sufficient,
-                "refusal_reason": refusal_reason,
             }
         )
-
-    @staticmethod
-    def _calculate_evidence_coverage(
-        evidence: list[Evidence],
-    ) -> float:
-        """Calculate the fraction of evidence items that passed verification."""
-        if not evidence:
-            return 0.0
-
-        verified_count = sum(
-            1
-            for item in evidence
-            if item.status.value == "verified"
-        )
-
-        return verified_count / len(evidence)
 
 
 def get_interview_questions() -> list[InterviewQuestion]:

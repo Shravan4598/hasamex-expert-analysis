@@ -168,8 +168,9 @@ def render_all_experts_question(
                         with st.spinner(
                             "Retrieving transcript evidence..."
                         ):
+                            # FIXED: Pass the question object instead of question.question_id string
                             answer = analyzer.analyze_question(
-                                question=question.question_id,
+                                question=question,
                                 expert_name=expert_name,
                             )
 
@@ -318,8 +319,9 @@ def render_question_comparison(
                 with st.spinner(
                     f"Analyzing {expert_name}..."
                 ):
+                    # FIXED: Pass the selected_question object instead of selected_question.question_id string
                     answer = analyzer.analyze_question(
-                        question=selected_question.question_id,
+                        question=selected_question,
                         expert_name=expert_name,
                     )
 
@@ -424,7 +426,7 @@ def _run_single_analysis(
             "Retrieving evidence and generating grounded answer..."
         ):
             answer = analyzer.analyze_question(
-                question=question.question_id,
+                question=question,
                 expert_name=expert_name,
             )
 

@@ -1,3 +1,4 @@
+
 """
 Second-stage retrieval reranking.
 
@@ -17,9 +18,9 @@ The reranker combines:
     2. Query-token overlap with the chunk.
     3. Exact phrase matching.
     4. Question-term coverage.
+    5. Optional expert diversity.
 
-The resulting score is used only for ordering. The original FAISS
-similarity score remains available in RetrievalResult.score.
+The resulting score is used only for ordering.
 """
 
 from __future__ import annotations
@@ -27,7 +28,6 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
 
 from exception import SensorException
 from logger import logging
@@ -37,32 +37,38 @@ from src.models import RetrievalResult
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
 class RerankConfig:
-    """
-    Configuration for deterministic retrieval reranking.
+    """Configuration for deterministic retrieval reranking."""
 
-    The weights intentionally sum to 1.0.
-    """
+    def __init__(
+        self,
+        semantic_weight: float = 0.65,
+        lexical_weight: float = 0.20,
+        phrase_weight: float = 0.10,
+        coverage_weight: float = 0.05,
+    ) -> None:
+        self.semantic_weight = semantic_weight
+        self.lexical_weight = lexical_weight
+        self.phrase_weight = phrase_weight
+        self.coverage_weight = coverage_weight
 
-    semantic_weight: float = 0.65
-    lexical_weight: float = 0.20
-    phrase_weight: float = 0.10
-    coverage_weight: float = 0.05
-
-    def __post_init__(self) -> None:
-        """Validate reranking weights."""
         weights = (
-            self.semantic_weight,
-            self.lexical_weight,
-            self.phrase_weight,
-            self.coverage_weight,
+            semantic_weight,
+            lexical_weight,
+            phrase_weight,
+            coverage_weight,
         )
 
         if any(weight < 0.0 for weight in weights):
-            raise ValueError("Reranking weights cannot be negative.")
+            raise ValueError(
+                "Reranking weights cannot be negative."
+            )
 
-        if not math.isclose(sum(weights), 1.0, rel_tol=1e-9):
+        if not math.isclose(
+            sum(weights),
+            1.0,
+            rel_tol=1e-9,
+        ):
             raise ValueError(
                 "Reranking weights must sum to 1.0."
             )
@@ -72,8 +78,8 @@ class RetrievalReranker:
     """
     Deterministically rerank candidate retrieval results.
 
-    This component does not perform a second database/vector search.
-    It operates only on candidates already returned by the retriever.
+    This component operates only on candidates already returned by
+    the retriever.
     """
 
     STOPWORDS = frozenset(
@@ -122,15 +128,14 @@ class RetrievalReranker:
         settings: Settings | None = None,
         config: RerankConfig | None = None,
     ) -> None:
-        """
-        Initialize the reranker.
+        """Initialize the reranker."""
 
-        Args:
-            settings: Optional application settings.
-            config: Optional reranking weights.
-        """
         self.settings = settings or get_settings()
         self.config = config or RerankConfig()
+
+    # ==================================================================
+    # NORMAL RERANKING
+    # ==================================================================
 
     def rerank(
         self,
@@ -140,20 +145,11 @@ class RetrievalReranker:
     ) -> list[RetrievalResult]:
         """
         Rerank retrieval candidates against the original query.
-
-        Args:
-            query: Original user query.
-            results: Candidate retrieval results from semantic search.
-            top_k: Optional maximum number of results to return.
-
-        Returns:
-            Reranked RetrievalResult objects.
-
-        Raises:
-            SensorException: If reranking fails.
         """
+
         try:
             normalized_query = self._validate_query(query)
+
             candidates = list(results)
 
             if not candidates:
@@ -166,11 +162,17 @@ class RetrievalReranker:
             )
 
             if requested_top_k <= 0:
-                raise ValueError("top_k must be greater than zero.")
+                raise ValueError(
+                    "top_k must be greater than zero."
+                )
 
-            query_tokens = self._meaningful_tokens(normalized_query)
+            query_tokens = self._meaningful_tokens(
+                normalized_query
+            )
 
-            scored_results: list[tuple[float, RetrievalResult]] = []
+            scored_results: list[
+                tuple[float, RetrievalResult]
+            ] = []
 
             for result in candidates:
                 score = self._calculate_score(
@@ -180,7 +182,10 @@ class RetrievalReranker:
                 )
 
                 scored_results.append(
-                    (score, result)
+                    (
+                        score,
+                        result,
+                    )
                 )
 
             scored_results.sort(
@@ -193,7 +198,10 @@ class RetrievalReranker:
 
             reranked: list[RetrievalResult] = []
 
-            for rank, (rerank_score, result) in enumerate(
+            for rank, (
+                rerank_score,
+                result,
+            ) in enumerate(
                 scored_results[:requested_top_k],
                 start=1,
             ):
@@ -204,66 +212,107 @@ class RetrievalReranker:
                     }
                 )
 
-                reranked.append(updated_result)
+                reranked.append(
+                    updated_result
+                )
 
             logger.info(
                 "Reranked %d candidate(s) to %d result(s) for query: %s",
                 len(candidates),
                 len(reranked),
-                self._truncate_for_log(normalized_query),
+                self._truncate_for_log(
+                    normalized_query
+                ),
             )
 
             return reranked
 
         except SensorException:
             raise
+
         except Exception as error:
-            logger.exception("Failed to rerank retrieval results.")
+            logger.exception(
+                "Failed to rerank retrieval results."
+            )
+
             raise SensorException(
                 str(error),
                 _sys_module(),
             ) from error
 
+    # ==================================================================
+    # EXPERT-BALANCED RERANKING
+    # ==================================================================
+
     def rerank_by_expert_balance(
         self,
         query: str,
         results: Iterable[RetrievalResult],
-        expert_names: Iterable[str],
+        expert_names: Iterable[str] | None = None,
         top_k: int | None = None,
     ) -> list[RetrievalResult]:
         """
         Rerank results while encouraging representation across experts.
 
-        This is particularly useful for cross-transcript questions.
+        IMPORTANT:
+            expert_names is intentionally optional.
 
-        The method does not force equal representation. It first ranks
-        candidates by relevance and then applies a small diversity bonus
-        when an expert has not yet been represented.
+        If expert_names is supplied:
+            the method encourages representation from different experts.
 
-        Args:
-            query: Original user query.
-            results: Candidate retrieval results.
-            expert_names: Experts expected in the analysis.
-            top_k: Maximum number of results.
+        If expert_names is None or empty:
+            the method simply performs normal reranking.
 
-        Returns:
-            Reordered retrieval results.
+        This makes the method compatible with callers that do not
+        have an explicit expert scope.
         """
+
         try:
+            # ----------------------------------------------------------
+            # Always start with deterministic relevance reranking.
+            # ----------------------------------------------------------
+
             base_results = self.rerank(
                 query=query,
                 results=results,
                 top_k=None,
             )
 
-            normalized_experts = {
-                self._normalize_name(name)
-                for name in expert_names
-                if isinstance(name, str) and name.strip()
-            }
+            if not base_results:
+                return []
+
+            # ----------------------------------------------------------
+            # Normalize expert names safely.
+            # ----------------------------------------------------------
+
+            normalized_experts: set[str] = set()
+
+            if expert_names is not None:
+                normalized_experts = {
+                    self._normalize_name(name)
+                    for name in expert_names
+                    if isinstance(name, str)
+                    and name.strip()
+                }
+
+            # ----------------------------------------------------------
+            # If no expert information exists, use normal reranking.
+            # ----------------------------------------------------------
 
             if not normalized_experts:
-                return base_results[:top_k] if top_k else base_results
+                target_k = (
+                    top_k
+                    if top_k is not None
+                    else self.settings.rerank_top_k
+                )
+
+                return self._reassign_ranks(
+                    base_results[:target_k]
+                )
+
+            # ----------------------------------------------------------
+            # Determine target result count.
+            # ----------------------------------------------------------
 
             target_k = (
                 top_k
@@ -271,50 +320,101 @@ class RetrievalReranker:
                 else self.settings.rerank_top_k
             )
 
+            if target_k <= 0:
+                raise ValueError(
+                    "top_k must be greater than zero."
+                )
+
+            # ----------------------------------------------------------
+            # Expert-balanced selection.
+            # ----------------------------------------------------------
+
             selected: list[RetrievalResult] = []
-            remaining = list(base_results)
+
+            remaining = list(
+                base_results
+            )
+
             represented: set[str] = set()
 
-            # First pass: introduce relevant evidence from distinct experts.
-            while remaining and len(selected) < target_k:
-                best_index = self._find_best_unrepresented_expert(
-                    remaining=remaining,
-                    represented=represented,
-                    expected_experts=normalized_experts,
+            # ----------------------------------------------------------
+            # First pass:
+            # Select the strongest result from each unrepresented
+            # expert where possible.
+            # ----------------------------------------------------------
+
+            while (
+                remaining
+                and len(selected) < target_k
+            ):
+                best_index = (
+                    self._find_best_unrepresented_expert(
+                        remaining=remaining,
+                        represented=represented,
+                        expected_experts=normalized_experts,
+                    )
                 )
 
                 if best_index is None:
                     break
 
-                result = remaining.pop(best_index)
-                selected.append(result)
+                result = remaining.pop(
+                    best_index
+                )
+
+                selected.append(
+                    result
+                )
 
                 expert_key = self._normalize_name(
                     result.chunk.expert_name
                 )
 
                 if expert_key:
-                    represented.add(expert_key)
+                    represented.add(
+                        expert_key
+                    )
 
-            # Second pass: fill remaining slots by normal relevance.
+            # ----------------------------------------------------------
+            # Second pass:
+            # Fill remaining slots according to relevance.
+            # ----------------------------------------------------------
+
             for result in remaining:
                 if len(selected) >= target_k:
                     break
 
-                selected.append(result)
+                selected.append(
+                    result
+                )
 
-            return self._reassign_ranks(selected)
+            logger.info(
+                "Applied expert-balanced reranking: "
+                "%d selected result(s), %d expert(s) represented.",
+                len(selected),
+                len(represented),
+            )
+
+            return self._reassign_ranks(
+                selected
+            )
 
         except SensorException:
             raise
+
         except Exception as error:
             logger.exception(
                 "Failed to apply expert-balanced reranking."
             )
+
             raise SensorException(
                 str(error),
                 _sys_module(),
             ) from error
+
+    # ==================================================================
+    # SCORE EXPLANATION
+    # ==================================================================
 
     def explain_score(
         self,
@@ -323,22 +423,20 @@ class RetrievalReranker:
     ) -> dict[str, float]:
         """
         Explain the deterministic reranking score.
-
-        This is useful for debugging and demonstrating retrieval
-        transparency during a technical interview.
-
-        Args:
-            query: Original user query.
-            result: Retrieval candidate.
-
-        Returns:
-            Individual normalized score components and final score.
         """
-        normalized_query = self._validate_query(query)
-        query_tokens = self._meaningful_tokens(normalized_query)
 
-        semantic_score = self._normalize_semantic_score(
-            result.score
+        normalized_query = self._validate_query(
+            query
+        )
+
+        query_tokens = self._meaningful_tokens(
+            normalized_query
+        )
+
+        semantic_score = (
+            self._normalize_semantic_score(
+                result.score
+            )
         )
 
         lexical_score = self._lexical_overlap(
@@ -357,10 +455,14 @@ class RetrievalReranker:
         )
 
         final_score = (
-            self.config.semantic_weight * semantic_score
-            + self.config.lexical_weight * lexical_score
-            + self.config.phrase_weight * phrase_score
-            + self.config.coverage_weight * coverage_score
+            self.config.semantic_weight
+            * semantic_score
+            + self.config.lexical_weight
+            * lexical_score
+            + self.config.phrase_weight
+            * phrase_score
+            + self.config.coverage_weight
+            * coverage_score
         )
 
         return {
@@ -377,9 +479,8 @@ class RetrievalReranker:
         query_tokens: set[str],
         result: RetrievalResult,
     ) -> float:
-        """
-        Calculate the deterministic reranking score.
-        """
+        """Calculate deterministic reranking score."""
+
         components = self.explain_score(
             query=query,
             result=result,
@@ -387,24 +488,38 @@ class RetrievalReranker:
 
         return components["final_score"]
 
+    # ==================================================================
+    # LEXICAL SCORING
+    # ==================================================================
+
     def _lexical_overlap(
         self,
         query_tokens: set[str],
         chunk_text: str,
     ) -> float:
-        """
-        Calculate Jaccard-style lexical overlap.
-        """
+        """Calculate Jaccard-style lexical overlap."""
+
         if not query_tokens:
             return 0.0
 
-        chunk_tokens = self._meaningful_tokens(chunk_text)
+        chunk_tokens = self._meaningful_tokens(
+            chunk_text
+        )
 
         if not chunk_tokens:
             return 0.0
 
-        intersection = query_tokens.intersection(chunk_tokens)
-        union = query_tokens.union(chunk_tokens)
+        intersection = (
+            query_tokens.intersection(
+                chunk_tokens
+            )
+        )
+
+        union = (
+            query_tokens.union(
+                chunk_tokens
+            )
+        )
 
         if not union:
             return 0.0
@@ -416,16 +531,20 @@ class RetrievalReranker:
         query_tokens: set[str],
         chunk_text: str,
     ) -> float:
-        """
-        Calculate the proportion of meaningful query terms present
-        in the retrieved chunk.
-        """
+        """Calculate query-term coverage."""
+
         if not query_tokens:
             return 0.0
 
-        chunk_tokens = self._meaningful_tokens(chunk_text)
+        chunk_tokens = self._meaningful_tokens(
+            chunk_text
+        )
 
-        matched = query_tokens.intersection(chunk_tokens)
+        matched = (
+            query_tokens.intersection(
+                chunk_tokens
+            )
+        )
 
         return len(matched) / len(query_tokens)
 
@@ -434,71 +553,101 @@ class RetrievalReranker:
         query: str,
         chunk_text: str,
     ) -> float:
-        """
-        Detect whether the complete normalized query occurs in the chunk.
+        """Calculate phrase matching score."""
 
-        A full phrase match receives 1.0. For multi-word queries, a
-        normalized bigram sequence receives a partial score.
-        """
-        normalized_query = self._normalize_for_matching(query)
-        normalized_chunk = self._normalize_for_matching(chunk_text)
+        normalized_query = (
+            self._normalize_for_matching(
+                query
+            )
+        )
 
-        if not normalized_query or not normalized_chunk:
+        normalized_chunk = (
+            self._normalize_for_matching(
+                chunk_text
+            )
+        )
+
+        if (
+            not normalized_query
+            or not normalized_chunk
+        ):
             return 0.0
 
         if normalized_query in normalized_chunk:
             return 1.0
 
-        query_tokens = normalized_query.split()
+        query_tokens = (
+            normalized_query.split()
+        )
 
         if len(query_tokens) < 2:
             return 0.0
 
-        chunk_tokens = normalized_chunk.split()
+        chunk_tokens = (
+            normalized_chunk.split()
+        )
 
         if len(chunk_tokens) < 2:
             return 0.0
 
         query_bigrams = {
-            f"{query_tokens[index]} {query_tokens[index + 1]}"
-            for index in range(len(query_tokens) - 1)
+            f"{query_tokens[index]} "
+            f"{query_tokens[index + 1]}"
+            for index in range(
+                len(query_tokens) - 1
+            )
         }
 
         chunk_bigrams = {
-            f"{chunk_tokens[index]} {chunk_tokens[index + 1]}"
-            for index in range(len(chunk_tokens) - 1)
+            f"{chunk_tokens[index]} "
+            f"{chunk_tokens[index + 1]}"
+            for index in range(
+                len(chunk_tokens) - 1
+            )
         }
 
         if not query_bigrams:
             return 0.0
 
         return len(
-            query_bigrams.intersection(chunk_bigrams)
+            query_bigrams.intersection(
+                chunk_bigrams
+            )
         ) / len(query_bigrams)
+
+    # ==================================================================
+    # NORMALIZATION
+    # ==================================================================
 
     def _normalize_semantic_score(
         self,
         score: float,
     ) -> float:
         """
-        Convert cosine similarity to a stable [0, 1] range.
-
-        Normalized embeddings produce cosine similarity in [-1, 1].
-        The transformation preserves ordering:
-
-            -1 -> 0
-             0 -> 0.5
-             1 -> 1
+        Convert cosine similarity into [0, 1].
         """
-        return max(0.0, min(1.0, (float(score) + 1.0) / 2.0))
+
+        return max(
+            0.0,
+            min(
+                1.0,
+                (
+                    float(score)
+                    + 1.0
+                )
+                / 2.0,
+            ),
+        )
 
     def _meaningful_tokens(
         self,
         text: str,
     ) -> set[str]:
-        """
-        Extract lowercase content-bearing tokens.
-        """
+        """Extract lowercase meaningful tokens."""
+
+        if not isinstance(text, str):
+            return set()
+
         tokens = self.TOKEN_PATTERN.findall(
             text.casefold()
         )
@@ -511,16 +660,38 @@ class RetrievalReranker:
         }
 
     @staticmethod
-    def _normalize_for_matching(text: str) -> str:
-        """
-        Normalize text for deterministic phrase matching.
-        """
+    def _normalize_for_matching(
+        text: str,
+    ) -> str:
+        """Normalize text for phrase matching."""
+
+        if not isinstance(text, str):
+            return ""
+
         text = text.casefold()
-        text = text.replace("’", "'")
-        text = re.sub(r"\s+", " ", text)
-        text = re.sub(r"[^\w\s'-]", "", text)
+
+        text = text.replace(
+            "’",
+            "'",
+        )
+
+        text = re.sub(
+            r"\s+",
+            " ",
+            text,
+        )
+
+        text = re.sub(
+            r"[^\w\s'-]",
+            "",
+            text,
+        )
 
         return text.strip()
+
+    # ==================================================================
+    # EXPERT BALANCE HELPERS
+    # ==================================================================
 
     def _find_best_unrepresented_expert(
         self,
@@ -529,13 +700,15 @@ class RetrievalReranker:
         expected_experts: set[str],
     ) -> int | None:
         """
-        Find the highest-scoring candidate belonging to an expert that
-        has not yet been represented.
+        Find strongest result belonging to an unrepresented expert.
         """
+
         best_index: int | None = None
         best_score = float("-inf")
 
-        for index, result in enumerate(remaining):
+        for index, result in enumerate(
+            remaining
+        ):
             expert = self._normalize_name(
                 result.chunk.expert_name
             )
@@ -546,13 +719,18 @@ class RetrievalReranker:
             if expert in represented:
                 continue
 
-            if expected_experts and not any(
-                expected == expert
-                or expected in expert
-                or expert in expected
-                for expected in expected_experts
-            ):
-                continue
+            # Match exact names first, then tolerate small metadata
+            # differences such as "Dr John Smith" vs "John Smith".
+            if expected_experts:
+                matched = any(
+                    expected == expert
+                    or expected in expert
+                    or expert in expected
+                    for expected in expected_experts
+                )
+
+                if not matched:
+                    continue
 
             if result.score > best_score:
                 best_score = result.score
@@ -564,46 +742,73 @@ class RetrievalReranker:
     def _reassign_ranks(
         results: list[RetrievalResult],
     ) -> list[RetrievalResult]:
-        """
-        Reassign result ranks after diversity processing.
-        """
+        """Reassign ranks after diversity processing."""
+
         return [
             result.model_copy(
-                update={"rank": rank}
+                update={
+                    "rank": rank
+                }
             )
-            for rank, result in enumerate(results, start=1)
+            for rank, result in enumerate(
+                results,
+                start=1,
+            )
         ]
 
     @staticmethod
-    def _normalize_name(value: str | None) -> str:
-        """
-        Normalize an expert name for comparison.
-        """
+    def _normalize_name(
+        value: str | None,
+    ) -> str:
+        """Normalize expert names for comparison."""
+
         if not value:
             return ""
 
         normalized = value.casefold()
-        normalized = normalized.replace("’", "'")
-        normalized = normalized.replace(".", " ")
 
-        normalized = normalized.removeprefix("dr ")
+        normalized = normalized.replace(
+            "’",
+            "'",
+        )
 
-        return " ".join(normalized.split())
+        normalized = normalized.replace(
+            ".",
+            " ",
+        )
+
+        normalized = normalized.removeprefix(
+            "dr "
+        )
+
+        return " ".join(
+            normalized.split()
+        )
+
+    # ==================================================================
+    # VALIDATION / LOGGING
+    # ==================================================================
 
     @staticmethod
-    def _validate_query(query: str) -> str:
-        """
-        Validate and normalize a query.
-        """
+    def _validate_query(
+        query: str,
+    ) -> str:
+        """Validate and normalize a query."""
+
         if not isinstance(query, str):
             raise TypeError(
-                f"Query must be a string, got {type(query).__name__}."
+                "Query must be a string, "
+                f"got {type(query).__name__}."
             )
 
-        normalized = " ".join(query.split())
+        normalized = " ".join(
+            query.split()
+        )
 
         if not normalized:
-            raise ValueError("Query cannot be empty.")
+            raise ValueError(
+                "Query cannot be empty."
+            )
 
         return normalized
 
@@ -612,20 +817,23 @@ class RetrievalReranker:
         value: str,
         max_length: int = 120,
     ) -> str:
-        """
-        Keep query text concise in logs.
-        """
-        normalized = " ".join(value.split())
+        """Keep query text concise in logs."""
+
+        normalized = " ".join(
+            value.split()
+        )
 
         if len(normalized) <= max_length:
             return normalized
 
-        return f"{normalized[:max_length - 3]}..."
-
+        return (
+            f"{normalized[:max_length - 3]}..."
+        )
 
 
 def _sys_module():
-    """Return the active sys module for SensorException."""
+    """Return the active sys module."""
+
     import sys
 
     return sys
@@ -635,3 +843,4 @@ __all__ = [
     "RerankConfig",
     "RetrievalReranker",
 ]
+

@@ -222,7 +222,7 @@ def _run_theme_analysis(
 
         st.session_state[
             "hasamex_themes"
-        ] = None
+        ] = []
 
         st.error(
             _safe_error_message(error)
